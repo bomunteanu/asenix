@@ -11,6 +11,9 @@ dims_per_categorical_key = 1
 neighbourhood_radius = 0.1
 summary_llm_endpoint = "http://localhost:11434"
 summary_llm_model = "llama2"
+artifact_storage_path = "./artifacts-test"
+max_artifact_blob_bytes = 10485760
+max_artifact_storage_per_agent_bytes = 1073741824
 
 [pheromone]
 decay_half_life_hours = 24
@@ -32,3 +35,6 @@ staleness_check_interval_minutes = 30
 
 [acceptance]
 required_provenance_fields = ["agent_id", "timestamp"]
+
+[mcp]
+allowed_origins = ["http://localhost:3000"]

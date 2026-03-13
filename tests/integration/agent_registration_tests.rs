@@ -1,18 +1,19 @@
-use super::{setup_test_app, make_mcp_request};
+use super::{setup_test_app, initialize_session, make_tool_call};
 use ed25519_dalek::Signer;
 
 #[tokio::test]
 async fn test_agent_registration_success() {
     let app = setup_test_app().await;
+    let session_id = initialize_session(&app).await;
     
     // Generate a fresh Ed25519 keypair
     let signing_key = ed25519_dalek::SigningKey::from_bytes(&[0u8; 32]);
     let public_key_hex = hex::encode(signing_key.verifying_key().as_bytes());
     
-    // Call register_agent
-    let response = make_mcp_request(&app, "register_agent", Some(serde_json::json!({
+    // Call register_agent via tools/call
+    let response = make_tool_call(&app, &session_id, "register_agent", serde_json::json!({
         "public_key": public_key_hex
-    })), Some(serde_json::json!(1))).await.unwrap();
+    }), serde_json::json!(1)).await.unwrap();
     
     // Verify response structure
     assert!(response["result"].is_object());
@@ -36,23 +37,24 @@ async fn test_agent_registration_success() {
 #[tokio::test]
 async fn test_agent_registration_duplicate_public_key() {
     let app = setup_test_app().await;
+    let session_id = initialize_session(&app).await;
     
     // Generate a keypair
     let signing_key = ed25519_dalek::SigningKey::from_bytes(&[1u8; 32]);
     let public_key_hex = hex::encode(signing_key.verifying_key().as_bytes());
     
     // Register agent first time
-    let response1 = make_mcp_request(&app, "register_agent", Some(serde_json::json!({
+    let response1 = make_tool_call(&app, &session_id, "register_agent", serde_json::json!({
         "public_key": public_key_hex.clone()
-    })), Some(serde_json::json!(1))).await.unwrap();
+    }), serde_json::json!(1)).await.unwrap();
     
     assert!(response1["result"].is_object());
     assert!(response1.get("error").is_some() && response1["error"].is_null());
     
     // Try to register same public key again
-    let response2 = make_mcp_request(&app, "register_agent", Some(serde_json::json!({
+    let response2 = make_tool_call(&app, &session_id, "register_agent", serde_json::json!({
         "public_key": public_key_hex
-    })), Some(serde_json::json!(2))).await.unwrap();
+    }), serde_json::json!(2)).await.unwrap();
     
     // Should return an error
     assert!(response2["error"].is_object());
@@ -68,14 +70,15 @@ async fn test_agent_registration_duplicate_public_key() {
 #[tokio::test]
 async fn test_agent_confirmation_success() {
     let app = setup_test_app().await;
+    let session_id = initialize_session(&app).await;
     
     // Register an agent
     let signing_key = ed25519_dalek::SigningKey::from_bytes(&[2u8; 32]);
     let public_key_hex = hex::encode(signing_key.verifying_key().as_bytes());
     
-    let register_response = make_mcp_request(&app, "register_agent", Some(serde_json::json!({
+    let register_response = make_tool_call(&app, &session_id, "register_agent", serde_json::json!({
         "public_key": public_key_hex
-    })), Some(serde_json::json!(1))).await.unwrap();
+    }), serde_json::json!(1)).await.unwrap();
     
     let agent_id = register_response["result"]["agent_id"].as_str().unwrap();
     let challenge_hex = register_response["result"]["challenge"].as_str().unwrap();
@@ -86,10 +89,10 @@ async fn test_agent_confirmation_success() {
     let signature_hex = hex::encode(signature_bytes);
     
     // Confirm the agent
-    let confirm_response = make_mcp_request(&app, "confirm_agent", Some(serde_json::json!({
+    let confirm_response = make_tool_call(&app, &session_id, "confirm_agent", serde_json::json!({
         "agent_id": agent_id,
         "signature": signature_hex
-    })), Some(serde_json::json!(2))).await.unwrap();
+    }), serde_json::json!(2)).await.unwrap();
     
     // Should succeed
     assert!(confirm_response["result"].is_object());
@@ -103,14 +106,15 @@ async fn test_agent_confirmation_success() {
 #[tokio::test]
 async fn test_agent_confirmation_bad_signature() {
     let app = setup_test_app().await;
+    let session_id = initialize_session(&app).await;
     
     // Register an agent
     let signing_key = ed25519_dalek::SigningKey::from_bytes(&[2u8; 32]);
     let public_key_hex = hex::encode(signing_key.verifying_key().as_bytes());
     
-    let register_response = make_mcp_request(&app, "register_agent", Some(serde_json::json!({
+    let register_response = make_tool_call(&app, &session_id, "register_agent", serde_json::json!({
         "public_key": public_key_hex
-    })), Some(serde_json::json!(1))).await.unwrap();
+    }), serde_json::json!(1)).await.unwrap();
     
     let agent_id = register_response["result"]["agent_id"].as_str().unwrap();
     
@@ -118,10 +122,10 @@ async fn test_agent_confirmation_bad_signature() {
     let fake_signature = "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
     
     // Try to confirm with fake signature
-    let confirm_response = make_mcp_request(&app, "confirm_agent", Some(serde_json::json!({
+    let confirm_response = make_tool_call(&app, &session_id, "confirm_agent", serde_json::json!({
         "agent_id": agent_id,
         "signature": fake_signature
-    })), Some(serde_json::json!(2))).await.unwrap();
+    }), serde_json::json!(2)).await.unwrap();
     
     // Should return authentication error
     assert!(confirm_response["error"].is_object());
@@ -137,14 +141,15 @@ async fn test_agent_confirmation_bad_signature() {
 #[tokio::test]
 async fn test_agent_confirmation_invalid_agent_id() {
     let app = setup_test_app().await;
+    let session_id = initialize_session(&app).await;
     
     // Try to confirm a non-existent agent
     let fake_signature = "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
     
-    let confirm_response = make_mcp_request(&app, "confirm_agent", Some(serde_json::json!({
+    let confirm_response = make_tool_call(&app, &session_id, "confirm_agent", serde_json::json!({
         "agent_id": "non-existent-agent-id",
         "signature": fake_signature
-    })), Some(serde_json::json!(1))).await.unwrap();
+    }), serde_json::json!(1)).await.unwrap();
     
     // Should return an error
     assert!(confirm_response["error"].is_object());
@@ -160,11 +165,12 @@ async fn test_agent_confirmation_invalid_agent_id() {
 #[tokio::test]
 async fn test_agent_registration_invalid_public_key() {
     let app = setup_test_app().await;
+    let session_id = initialize_session(&app).await;
     
     // Try to register with invalid public key (not hex)
-    let response = make_mcp_request(&app, "register_agent", Some(serde_json::json!({
+    let response = make_tool_call(&app, &session_id, "register_agent", serde_json::json!({
         "public_key": "invalid-hex-string"
-    })), Some(serde_json::json!(1))).await.unwrap();
+    }), serde_json::json!(1)).await.unwrap();
     
     // Should return an error
     assert!(response["error"].is_object());
@@ -180,9 +186,10 @@ async fn test_agent_registration_invalid_public_key() {
 #[tokio::test]
 async fn test_agent_registration_missing_public_key() {
     let app = setup_test_app().await;
+    let session_id = initialize_session(&app).await;
     
     // Try to register without public key
-    let response = make_mcp_request(&app, "register_agent", Some(serde_json::json!({})), Some(serde_json::json!(1))).await.unwrap();
+    let response = make_tool_call(&app, &session_id, "register_agent", serde_json::json!({}), serde_json::json!(1)).await.unwrap();
     
     // Should return an error
     assert!(response["error"].is_object());
@@ -198,18 +205,19 @@ async fn test_agent_registration_missing_public_key() {
 #[tokio::test]
 async fn test_agent_confirmation_missing_fields() {
     let app = setup_test_app().await;
+    let session_id = initialize_session(&app).await;
     
     // Try to confirm without agent_id
-    let response1 = make_mcp_request(&app, "confirm_agent", Some(serde_json::json!({
+    let response1 = make_tool_call(&app, &session_id, "confirm_agent", serde_json::json!({
         "signature": "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
-    })), Some(serde_json::json!(1))).await.unwrap();
+    }), serde_json::json!(1)).await.unwrap();
     
     assert!(response1["error"].is_object());
     
     // Try to confirm without signature
-    let response2 = make_mcp_request(&app, "confirm_agent", Some(serde_json::json!({
+    let response2 = make_tool_call(&app, &session_id, "confirm_agent", serde_json::json!({
         "agent_id": "some-agent-id"
-    })), Some(serde_json::json!(2))).await.unwrap();
+    }), serde_json::json!(2)).await.unwrap();
     
     assert!(response2["error"].is_object());
 }
@@ -217,24 +225,25 @@ async fn test_agent_confirmation_missing_fields() {
 #[tokio::test]
 async fn test_agent_confirmation_invalid_signature_format() {
     let app = setup_test_app().await;
+    let session_id = initialize_session(&app).await;
     
     // Register an agent first
     let signing_key = ed25519_dalek::SigningKey::from_bytes(&[4u8; 32]);
     let public_key_hex = hex::encode(signing_key.verifying_key().as_bytes());
     
-    let register_response = make_mcp_request(&app, "register_agent", Some(serde_json::json!({
+    let register_response = make_tool_call(&app, &session_id, "register_agent", serde_json::json!({
         "public_key": public_key_hex
-    })), Some(serde_json::json!(1))).await.unwrap();
+    }), serde_json::json!(1)).await.unwrap();
     
     let agent_id = register_response["result"]["agent_id"].as_str().unwrap();
     
     // Try to confirm with invalid signature format (not hex, wrong length)
     let invalid_signature = "invalid-signature-format";
     
-    let confirm_response = make_mcp_request(&app, "confirm_agent", Some(serde_json::json!({
+    let confirm_response = make_tool_call(&app, &session_id, "confirm_agent", serde_json::json!({
         "agent_id": agent_id,
         "signature": invalid_signature
-    })), Some(serde_json::json!(2))).await.unwrap();
+    }), serde_json::json!(2)).await.unwrap();
     
     // Should return an error
     assert!(confirm_response["error"].is_object());

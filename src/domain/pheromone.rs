@@ -8,9 +8,10 @@ use serde_json::Value;
 /// - Replication-weighted attraction is not implemented
 /// - Decay uses created_at instead of last_activity_at
 /// - Custom scoring functions in get_suggestions are not supported
-
-/// Compute attraction boost based on metric improvement
-/// Returns the boost amount to be added to each neighbour's attraction
+///
+/// Compute attraction boost based on metric improvement.
+///
+/// Returns the boost amount to be added to each neighbour's attraction.
 pub fn attraction_boost(
     new_metric_value: f64,
     neighbourhood_best: Option<f64>,

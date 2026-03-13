@@ -10,15 +10,18 @@ pub struct Resource {
     pub uri: String,
     pub name: String,
     pub description: String,
+    #[serde(rename = "mimeType")]
     pub mime_type: String,
 }
 
 /// Resource template definition
 #[derive(Debug, Clone, Serialize)]
 pub struct ResourceTemplate {
+    #[serde(rename = "uriTemplate")]
     pub uri_template: String,
     pub name: String,
     pub description: String,
+    #[serde(rename = "mimeType")]
     pub mime_type: String,
 }
 
@@ -31,6 +34,7 @@ pub struct ResourcesListResult {
 /// Resource templates list result
 #[derive(Debug, Clone, Serialize)]
 pub struct ResourceTemplatesListResult {
+    #[serde(rename = "resourceTemplates")]
     pub templates: Vec<ResourceTemplate>,
 }
 
@@ -38,15 +42,14 @@ pub struct ResourceTemplatesListResult {
 #[derive(Debug, Clone, Serialize)]
 pub struct ResourceReadResult {
     pub contents: Vec<ResourceContent>,
-    pub error: Option<String>,
 }
 
 /// Resource content
 #[derive(Debug, Clone, Serialize)]
 pub struct ResourceContent {
-    #[serde(rename = "type")]
-    pub content_type: String,
-    #[serde(rename = "text")]
+    pub uri: String,
+    #[serde(rename = "mimeType")]
+    pub mime_type: String,
     pub text: String,
 }
 
@@ -96,74 +99,81 @@ pub async fn read_resource(
     uri: &str,
 ) -> Result<ResourceReadResult> {
     match uri {
-        // Atom resource: atom://{atom_id}
         uri if uri.starts_with("atom://") => {
-            let atom_id = uri.strip_prefix("atom://")
+            let atom_id = uri
+                .strip_prefix("atom://")
                 .ok_or_else(|| MoteError::Validation("Invalid atom URI".to_string()))?;
-            
-            // Query atom from database
+
             let atom = crate::db::queries::get_atom(&state.pool, atom_id).await?;
-            
-            let content = serde_json::to_string(&atom).map_err(|e| MoteError::Validation(format!("Failed to serialize atom: {}", e)))?;
-            
+            let content = serde_json::to_string(&atom)
+                .map_err(|e| MoteError::Validation(format!("Failed to serialize atom: {}", e)))?;
+
             Ok(ResourceReadResult {
                 contents: vec![ResourceContent {
-                    content_type: "application/json".to_string(),
+                    uri: uri.to_string(),
+                    mime_type: "application/json".to_string(),
                     text: content,
                 }],
-                error: None,
             })
-        },
-        
-        // Artifact metadata resource: artifact://{hash}/meta
+        }
         uri if uri.starts_with("artifact://") && uri.ends_with("/meta") => {
-            let hash = uri.strip_prefix("artifact://")
+            let hash = uri
+                .strip_prefix("artifact://")
                 .and_then(|h| h.strip_suffix("/meta"))
                 .ok_or_else(|| MoteError::Validation("Invalid artifact URI".to_string()))?;
-            
-            // Get artifact metadata from storage
+
             let metadata_result = crate::api::artifacts::get_artifact_metadata(
-                axum::extract::State(std::sync::Arc::new(state.clone())), 
-                axum::extract::Path(hash.to_string())
-            ).await;
-            
+                axum::extract::State(std::sync::Arc::new(state.clone())),
+                axum::extract::Path(hash.to_string()),
+            )
+            .await;
+
             let metadata = match metadata_result {
                 Ok(meta) => meta,
-                Err(status) => return Err(MoteError::Validation(format!("Failed to get metadata: {:?}", status)))
+                Err(status) => {
+                    return Err(MoteError::Validation(format!(
+                        "Failed to get metadata: {:?}",
+                        status
+                    )))
+                }
             };
-            
-            let content = serde_json::to_string(&metadata.0).map_err(|e| MoteError::Validation(format!("Failed to serialize metadata: {}", e)))?;
-            
+
+            let content = serde_json::to_string(&metadata.0)
+                .map_err(|e| MoteError::Validation(format!("Failed to serialize metadata: {}", e)))?;
+
             Ok(ResourceReadResult {
                 contents: vec![ResourceContent {
-                    content_type: "application/json".to_string(),
+                    uri: uri.to_string(),
+                    mime_type: "application/json".to_string(),
                     text: content,
                 }],
-                error: None,
             })
-        },
-        
-        // Field map resource: fieldmap://{domain}
+        }
         uri if uri.starts_with("fieldmap://") => {
-            let domain = uri.strip_prefix("fieldmap://")
+            let domain = uri
+                .strip_prefix("fieldmap://")
                 .ok_or_else(|| MoteError::Validation("Invalid fieldmap URI".to_string()))?;
-            
-            // Call handler
-            let atoms = rpc::handle_get_field_map(&state, Some(json!({
-                "domain": domain,
-            }))).await?;
-            
-            let content = serde_json::to_string(&atoms).map_err(|e| MoteError::Validation(format!("Failed to serialize atoms: {}", e)))?;
-            
+
+            let domain_param = if domain == "all" { None } else { Some(domain) };
+            let atoms = rpc::handle_get_field_map(
+                state,
+                Some(json!({
+                    "domain": domain_param,
+                })),
+            )
+            .await?;
+
+            let content = serde_json::to_string(&atoms)
+                .map_err(|e| MoteError::Validation(format!("Failed to serialize atoms: {}", e)))?;
+
             Ok(ResourceReadResult {
                 contents: vec![ResourceContent {
-                    content_type: "application/json".to_string(),
+                    uri: uri.to_string(),
+                    mime_type: "application/json".to_string(),
                     text: content,
                 }],
-                error: None,
             })
-        },
-        
+        }
         _ => Err(MoteError::Validation(format!("Unsupported resource URI: {}", uri))),
     }
 }

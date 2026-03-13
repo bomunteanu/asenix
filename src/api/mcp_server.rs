@@ -1,46 +1,54 @@
+use crate::api::mcp_session::{Capabilities, ClientInfo, SessionStore};
 use crate::error::{MoteError, Result};
 use crate::state::AppState;
-use crate::api::mcp_session::{SessionStore, ClientInfo, Capabilities};
-use axum::extract::{State};
-use axum::http::{HeaderMap};
-use axum::response::Json;
+use axum::extract::State;
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::{IntoResponse, Json, Response};
 use serde_json::{json, Value};
 use std::sync::Arc;
-use blake3::Hasher;
-use hex;
 
-/// MCP request/response structures for initialize
+const HEADER_SESSION_ID: &str = "MCP-Session-Id";
+const HEADER_PROTOCOL_VERSION: &str = "MCP-Protocol-Version";
+const CURRENT_PROTOCOL_VERSION: &str = "2025-11-25";
+const FALLBACK_PROTOCOL_VERSION: &str = "2025-03-26";
+const SUPPORTED_PROTOCOL_VERSIONS: [&str; 2] = [CURRENT_PROTOCOL_VERSION, FALLBACK_PROTOCOL_VERSION];
+
 #[derive(serde::Deserialize)]
 pub struct InitializeRequest {
+    #[serde(rename = "protocolVersion")]
     pub protocol_version: String,
-    pub capabilities: Option<Value>,
+    #[serde(default)]
+    pub capabilities: Capabilities,
+    #[serde(rename = "clientInfo")]
     pub client_info: ClientInfo,
 }
 
 #[derive(serde::Serialize)]
 pub struct InitializeResult {
+    #[serde(rename = "protocolVersion")]
     pub protocol_version: String,
     pub capabilities: ServerCapabilities,
+    #[serde(rename = "serverInfo")]
     pub server_info: ServerInfo,
 }
 
 #[derive(serde::Serialize)]
 pub struct ServerCapabilities {
-    #[serde(rename = "tools")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tools: Option<ToolsCapability>,
-    #[serde(rename = "resources")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub resources: Option<ResourcesCapability>,
 }
 
 #[derive(serde::Serialize)]
 pub struct ToolsCapability {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "listChanged", default, skip_serializing_if = "Option::is_none")]
     pub list_changed: Option<bool>,
 }
 
 #[derive(serde::Serialize)]
 pub struct ResourcesCapability {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "listChanged", default, skip_serializing_if = "Option::is_none")]
     pub list_changed: Option<bool>,
 }
 
@@ -50,20 +58,11 @@ pub struct ServerInfo {
     pub version: String,
 }
 
-/// MCP tool call request
-#[derive(serde::Deserialize)]
-pub struct ToolCallRequest {
-    pub name: String,
-    pub arguments: Value,
-}
-
-/// MCP tool call result
 #[derive(serde::Serialize)]
 pub struct ToolCallResult {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub content: Option<Vec<Content>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub is_error: Option<bool>,
+    pub content: Vec<Content>,
+    #[serde(rename = "isError")]
+    pub is_error: bool,
 }
 
 #[derive(serde::Serialize)]
@@ -74,490 +73,477 @@ pub struct Content {
     pub text: String,
 }
 
-/// Generate a BLAKE3 session ID
 fn generate_session_id() -> String {
-    use blake3::Hasher;
     use rand::RngCore;
-    
-    let mut hasher = Hasher::new();
+
+    let mut hasher = blake3::Hasher::new();
     let mut rng = rand::rng();
     let mut random_bytes = [0u8; 32];
     rng.fill_bytes(&mut random_bytes);
     hasher.update(&random_bytes);
-    
     hex::encode(hasher.finalize().as_bytes())
 }
 
-/// Validate Origin header against allowlist
-fn validate_origin(headers: &HeaderMap, allowed_origins: &[&str]) -> Result<()> {
-    if let Some(origin_value) = headers.get("origin") {
-        let origin = origin_value.to_str().map_err(|_| MoteError::Validation("Invalid Origin header".to_string()))?;
-        
-        if !allowed_origins.contains(&origin) {
-            return Err(MoteError::Validation(format!(
-                "Origin not allowed: {}. Allowed: {:?}",
-                origin,
-                allowed_origins
-            )));
-        }
+fn negotiate_protocol_version(client_protocol_version: &str) -> &str {
+    if SUPPORTED_PROTOCOL_VERSIONS.contains(&client_protocol_version) {
+        client_protocol_version
     } else {
-        return Err(MoteError::Validation("Missing Origin header".to_string()));
+        CURRENT_PROTOCOL_VERSION
     }
-    
+}
+
+fn jsonrpc_error_body(id: Option<Value>, code: i32, message: impl Into<String>) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "error": {
+            "code": code,
+            "message": message.into()
+        },
+        "id": id
+    })
+}
+
+fn jsonrpc_success_response(id: Option<Value>, result: Value) -> Response {
+    Json(json!({
+        "jsonrpc": "2.0",
+        "id": id,
+        "result": result
+    }))
+    .into_response()
+}
+
+fn jsonrpc_error_response(status: StatusCode, id: Option<Value>, code: i32, message: impl Into<String>) -> Response {
+    (status, Json(jsonrpc_error_body(id, code, message))).into_response()
+}
+
+fn parse_accept_header(header_value: &str) -> Vec<&str> {
+    header_value
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .collect()
+}
+
+fn has_accept_media_type(media_types: &[&str], required: &str) -> bool {
+    media_types
+        .iter()
+        .any(|part| part.eq_ignore_ascii_case(required))
+}
+
+fn validate_origin(headers: &HeaderMap, allowed_origins: &[&str]) -> std::result::Result<(), (StatusCode, String)> {
+    let Some(origin_header) = headers.get("origin") else {
+        return Ok(());
+    };
+
+    let origin = origin_header
+        .to_str()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid Origin header".to_string()))?;
+
+    if allowed_origins.contains(&origin) {
+        Ok(())
+    } else {
+        Err((StatusCode::FORBIDDEN, format!("Origin not allowed: {origin}")))
+    }
+}
+
+fn validate_post_accept_header(headers: &HeaderMap) -> std::result::Result<(), (StatusCode, String)> {
+    let accept_header = headers
+        .get("accept")
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, "Missing Accept header".to_string()))?;
+
+    let accept = accept_header
+        .to_str()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid Accept header".to_string()))?;
+
+    let media_types = parse_accept_header(accept);
+    let has_json = has_accept_media_type(&media_types, "application/json");
+    let has_sse = has_accept_media_type(&media_types, "text/event-stream");
+
+    if has_json && has_sse {
+        Ok(())
+    } else {
+        Err((
+            StatusCode::BAD_REQUEST,
+            "Accept header must include both application/json and text/event-stream".to_string(),
+        ))
+    }
+}
+
+fn validate_protocol_version_header(
+    headers: &HeaderMap,
+    expected_version: Option<&str>,
+) -> std::result::Result<(), (StatusCode, String)> {
+    let Some(version_header) = headers.get(HEADER_PROTOCOL_VERSION) else {
+        return Ok(());
+    };
+
+    let protocol_version = version_header
+        .to_str()
+        .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid MCP-Protocol-Version header".to_string()))?;
+
+    if !SUPPORTED_PROTOCOL_VERSIONS.contains(&protocol_version) {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("Unsupported MCP-Protocol-Version: {protocol_version}"),
+        ));
+    }
+
+    if let Some(expected) = expected_version {
+        if protocol_version != expected {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!(
+                    "Protocol version mismatch: expected {expected}, got {protocol_version}"
+                ),
+            ));
+        }
+    }
+
     Ok(())
 }
 
-/// Validate Accept header for MCP
-fn validate_accept_header(headers: &HeaderMap) -> Result<()> {
-    if let Some(accept_value) = headers.get("accept") {
-        let accept = accept_value.to_str().map_err(|_| MoteError::Validation("Invalid Accept header".to_string()))?;
-        
-        let required_types = ["application/json", "text/event-stream"];
-        
-        if !required_types.iter().any(|required_type| {
-            accept.contains(required_type)
-        }) {
-            return Err(MoteError::Validation(format!(
-                "Accept header must include both application/json and text/event-stream. Got: {}",
-                accept
-            )));
-        }
-    } else {
-        return Err(MoteError::Validation("Missing Accept header".to_string()));
+fn error_status(error: &MoteError) -> StatusCode {
+    match error {
+        MoteError::Authentication(_) => StatusCode::UNAUTHORIZED,
+        MoteError::NotFound(_) => StatusCode::NOT_FOUND,
+        MoteError::RateLimit => StatusCode::TOO_MANY_REQUESTS,
+        MoteError::Validation(_) => StatusCode::BAD_REQUEST,
+        _ => StatusCode::INTERNAL_SERVER_ERROR,
     }
-    
-    Ok(())
 }
 
-/// Handle POST /mcp requests
 pub async fn handle_mcp_request(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     body: String,
-) -> std::result::Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
-    let session_store = SessionStore::new();
-    
-    // Parse JSON body
-    let request_value: serde_json::Value = serde_json::from_str(&body)
-        .map_err(|_| (axum::http::StatusCode::BAD_REQUEST, "Invalid JSON".to_string()))?;
-    
-    // Check if this is a batch request (not supported)
-    if request_value.is_array() {
-        return Ok(Json(json!({
-            "jsonrpc": "2.0",
-            "error": {
-                "code": -32600,
-                "message": "Batch requests not supported",
-                "data": {
-                    "request_id": generate_session_id(),
-                    "timestamp": chrono::Utc::now().to_rfc3339()
-                }
-            }
-        })));
-    }
-    
-    // Parse single request
-    let request: serde_json::Value = serde_json::from_value(request_value)
-        .map_err(|_| (axum::http::StatusCode::BAD_REQUEST, "Invalid request".to_string()))?;
-    
-    // Extract request ID for logging
-    let request_id = request
-        .get("id")
-        .and_then(|id| id.as_str())
-        .unwrap_or("unknown");
-    
-    // Route by method
-    let result = match request
-        .get("method")
-        .and_then(|m| m.as_str())
-        .unwrap_or("unknown") {
-        "initialize" => handle_initialize(&state, &session_store, &request, &headers).await,
-        "notifications/initialized" => handle_notifications_initialized(&session_store, &request, &headers).await,
-        "tools/list" => handle_tools_list(&session_store, &request, &headers).await,
-        "tools/call" => handle_tools_call(&state, &session_store, &request, &headers).await,
-        "resources/list" => handle_resources_list(&session_store, &request, &headers).await,
-        "resources/templates/list" => handle_resources_templates_list(&session_store, &request, &headers).await,
-        "resources/read" => handle_resources_read(&state, &session_store, &request, &headers).await,
-        "ping" => handle_ping(&headers).await,
-        _ => handle_unknown_method(&request, &headers).await,
+) -> std::result::Result<Response, (StatusCode, String)> {
+    let allowed_origins: Vec<&str> = state.config.mcp.allowed_origins.iter().map(String::as_str).collect();
+    validate_origin(&headers, &allowed_origins)?;
+    validate_post_accept_header(&headers)?;
+
+    let request: Value = match serde_json::from_str(&body) {
+        Ok(value) => value,
+        Err(_) => {
+            return Ok(jsonrpc_error_response(
+                StatusCode::BAD_REQUEST,
+                None,
+                -32700,
+                "Parse error",
+            ));
+        }
     };
-    
+
+    if request.is_array() {
+        return Ok(jsonrpc_error_response(
+            StatusCode::BAD_REQUEST,
+            None,
+            -32600,
+            "Batch requests are not supported",
+        ));
+    }
+
+    if request.get("method").is_none() && request.get("id").is_some() {
+        return Ok(StatusCode::ACCEPTED.into_response());
+    }
+
+    let request_id = request.get("id").cloned();
+    let is_notification = request_id.is_none();
+
+    let method = match request.get("method").and_then(Value::as_str) {
+        Some(method) => method,
+        None => {
+            return Ok(jsonrpc_error_response(
+                StatusCode::BAD_REQUEST,
+                None,
+                -32600,
+                "Invalid Request",
+            ));
+        }
+    };
+
+    if method != "initialize" {
+        let header_session_id = headers
+            .get(HEADER_SESSION_ID)
+            .and_then(|value| value.to_str().ok());
+
+        if let Some(session_id) = header_session_id {
+            if let Some(session) = state.session_store.get_session(session_id) {
+                validate_protocol_version_header(&headers, Some(&session.protocol_version))?;
+            } else {
+                return Ok(jsonrpc_error_response(
+                    StatusCode::NOT_FOUND,
+                    None,
+                    -32003,
+                    "Session not found",
+                ));
+            }
+        } else {
+            validate_protocol_version_header(&headers, Some(FALLBACK_PROTOCOL_VERSION))?;
+        }
+    }
+
+    let result = match method {
+        "initialize" => match handle_initialize(&state.session_store, &request).await {
+            Ok(response) => return Ok(response),
+            Err(error) => Err(error),
+        },
+        "notifications/initialized" => {
+            handle_notifications_initialized(&state.session_store, &headers).await
+        }
+        "tools/list" => handle_tools_list(&state.session_store, &headers).await,
+        "tools/call" => handle_tools_call(&state, &state.session_store, &request, &headers).await,
+        "resources/list" => handle_resources_list(&state.session_store, &headers).await,
+        "resources/templates/list" => {
+            handle_resources_templates_list(&state.session_store, &headers).await
+        }
+        "resources/read" => {
+            handle_resources_read(&state, &state.session_store, &request, &headers).await
+        }
+        "ping" => handle_ping(&state.session_store, &headers).await,
+        _ => {
+            let message = format!("Method not found: {method}");
+            if is_notification {
+                return Ok(jsonrpc_error_response(
+                    StatusCode::BAD_REQUEST,
+                    None,
+                    -32601,
+                    message,
+                ));
+            }
+            return Ok(jsonrpc_error_response(StatusCode::OK, request_id, -32601, message));
+        }
+    };
+
     match result {
-        Ok(response_value) => Ok(Json(response_value)),
-        Err((status, error_msg)) => Ok(Json(json!({
-            "jsonrpc": "2.0",
-            "error": {
-                "code": -32600,
-                "message": error_msg,
-                "data": {
-                    "request_id": request_id,
-                    "timestamp": chrono::Utc::now().to_rfc3339()
-                }
-            },
-            "id": request.get("id")
-        }))),
+        Ok(result_value) => {
+            if is_notification {
+                Ok(StatusCode::ACCEPTED.into_response())
+            } else {
+                Ok(jsonrpc_success_response(request_id, result_value))
+            }
+        }
+        Err(error) => {
+            if is_notification {
+                Ok(jsonrpc_error_response(
+                    error_status(&error),
+                    None,
+                    error.json_rpc_code(),
+                    error.to_string(),
+                ))
+            } else {
+                Ok(jsonrpc_error_response(
+                    StatusCode::OK,
+                    request_id,
+                    error.json_rpc_code(),
+                    error.to_string(),
+                ))
+            }
+        }
     }
 }
 
-/// Handle initialize request
-async fn handle_initialize(
-    state: &AppState,
-    session_store: &SessionStore,
-    request: &serde_json::Value,
-    headers: &HeaderMap,
-) -> std::result::Result<serde_json::Value, (axum::http::StatusCode, String)> {
-    // Validate Origin and Accept headers for initialize (no session required)
-    validate_origin(headers, &state.config.mcp.allowed_origins.iter().map(|s| s.as_str()).collect::<Vec<_>>())
-        .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, e.to_string()))?;
-    validate_accept_header(headers)
-        .map_err(|e| (axum::http::StatusCode::BAD_REQUEST, e.to_string()))?;
-    
-    // Parse initialize request
-    let init_req: InitializeRequest = serde_json::from_value(request.get("params").cloned().unwrap_or_default())
-        .map_err(|_| (axum::http::StatusCode::BAD_REQUEST, "Invalid initialize params".to_string()))?;
-    
-    // Generate session ID
+async fn handle_initialize(session_store: &SessionStore, request: &Value) -> Result<Response> {
+    let params = request
+        .get("params")
+        .cloned()
+        .ok_or_else(|| MoteError::Validation("Missing params".to_string()))?;
+
+    let init_req: InitializeRequest =
+        serde_json::from_value(params).map_err(|_| MoteError::Validation("Invalid initialize params".to_string()))?;
+
+    let negotiated_version = negotiate_protocol_version(&init_req.protocol_version).to_string();
     let session_id = generate_session_id();
-    
-    // Create session
-    let client_info = ClientInfo {
-        name: init_req.client_info.name,
-        version: init_req.client_info.version,
-    };
-    
-    let capabilities = Capabilities {
-        tools: Some(crate::api::mcp_session::ToolsCapability { list_changed: None }),
-        resources: Some(crate::api::mcp_session::ResourcesCapability { list_changed: None }),
-    };
-    
+
     session_store.create_session(
         session_id.clone(),
-        client_info,
-        capabilities,
-        "2025-03-26".to_string(),
+        init_req.client_info,
+        init_req.capabilities,
+        negotiated_version.clone(),
     );
-    
-    let response = InitializeResult {
-        protocol_version: "2025-03-26".to_string(),
+
+    let response_payload = InitializeResult {
+        protocol_version: negotiated_version.clone(),
         capabilities: ServerCapabilities {
-            tools: Some(ToolsCapability { list_changed: None }),
-            resources: Some(ResourcesCapability { list_changed: None }),
+            tools: Some(ToolsCapability {
+                list_changed: Some(false),
+            }),
+            resources: Some(ResourcesCapability {
+                list_changed: Some(false),
+            }),
         },
         server_info: ServerInfo {
             name: "mote".to_string(),
             version: env!("CARGO_PKG_VERSION").to_string(),
         },
     };
-    
-    let response_value = serde_json::to_value(response)
-        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    Ok(response_value)
+
+    let mut response = jsonrpc_success_response(
+        request.get("id").cloned(),
+        serde_json::to_value(response_payload).map_err(MoteError::Serialization)?,
+    );
+
+    response.headers_mut().insert(
+        HEADER_SESSION_ID,
+        session_id
+            .parse::<axum::http::HeaderValue>()
+            .map_err(|e| MoteError::Internal(e.to_string()))?,
+    );
+    response.headers_mut().insert(
+        HEADER_PROTOCOL_VERSION,
+        negotiated_version
+            .parse::<axum::http::HeaderValue>()
+            .map_err(|e| MoteError::Internal(e.to_string()))?,
+    );
+
+    Ok(response)
 }
 
-/// Handle notifications/initialized
-async fn handle_notifications_initialized(
-    session_store: &SessionStore,
-    request: &serde_json::Value,
-    headers: &HeaderMap,
-) -> std::result::Result<serde_json::Value, (axum::http::StatusCode, String)> {
-    // Extract session ID from headers
+async fn handle_notifications_initialized(session_store: &SessionStore, headers: &HeaderMap) -> Result<Value> {
     let session_id = headers
-        .get("mcp-session-id")
+        .get(HEADER_SESSION_ID)
         .and_then(|id| id.to_str().ok())
-        .ok_or_else(|| (axum::http::StatusCode::BAD_REQUEST, "Missing Mcp-Session-Id header".to_string()))?;
-    
-    // Validate session exists and is not initialized
-    let session = session_store.get_session(&session_id)
-        .ok_or_else(|| (axum::http::StatusCode::BAD_REQUEST, "Invalid session".to_string()))?;
-    
+        .ok_or_else(|| MoteError::Validation("Missing MCP-Session-Id header".to_string()))?;
+
+    let session = session_store
+        .get_session(session_id)
+        .ok_or_else(|| MoteError::NotFound("Session not found".to_string()))?;
+
     if session.initialized {
-        return Err((axum::http::StatusCode::BAD_REQUEST, "Session already initialized".to_string()));
+        return Err(MoteError::Validation("Session already initialized".to_string()));
     }
-    
-    // Mark session as initialized
-    session_store.mark_initialized(&session_id);
-    
-    // Return 202 Accepted with empty body
-    Ok(serde_json::Value::Null)
+
+    session_store.mark_initialized(session_id);
+    Ok(Value::Null)
 }
 
-/// Handle tools/list
-async fn handle_tools_list(
-    session_store: &SessionStore,
-    request: &serde_json::Value,
-    headers: &HeaderMap,
-) -> std::result::Result<serde_json::Value, (axum::http::StatusCode, String)> {
-    // Validate session
-    let session_id = validate_session_header(session_store, headers)?;
-    let session = session_store.get_session(&session_id)
-        .ok_or_else(|| (axum::http::StatusCode::BAD_REQUEST, "Session not found".to_string()))?;
-    
-    if !session.initialized {
-        return Err((axum::http::StatusCode::BAD_REQUEST, "Session not initialized".to_string()));
-    }
-    
-    // Update activity
-    session_store.update_activity(&session_id);
-    
+async fn handle_tools_list(session_store: &SessionStore, headers: &HeaderMap) -> Result<Value> {
+    validate_session_header(session_store, headers)?;
     let tools = crate::api::mcp_tools::get_all_tools();
-    let response_value = serde_json::to_value(tools)
-        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    Ok(response_value)
+    serde_json::to_value(tools).map_err(MoteError::Serialization)
 }
 
-/// Handle tools/call
 async fn handle_tools_call(
     state: &AppState,
     session_store: &SessionStore,
-    request: &serde_json::Value,
+    request: &Value,
     headers: &HeaderMap,
-) -> std::result::Result<serde_json::Value, (axum::http::StatusCode, String)> {
-    // Validate session
-    let session_id = validate_session_header(session_store, headers)?;
-    let session = session_store.get_session(&session_id)
-        .ok_or_else(|| (axum::http::StatusCode::BAD_REQUEST, "Session not found".to_string()))?;
-    
-    if !session.initialized {
-        return Err((axum::http::StatusCode::BAD_REQUEST, "Session not initialized".to_string()));
-    }
-    
-    // Update activity
-    session_store.update_activity(&session_id);
-    
-    // Dispatch to tool handler
-    let tool_name = request
+) -> Result<Value> {
+    validate_session_header(session_store, headers)?;
+
+    let params = request
+        .get("params")
+        .ok_or_else(|| MoteError::Validation("Missing params".to_string()))?;
+
+    let tool_name = params
         .get("name")
-        .and_then(|n| n.as_str())
-        .ok_or_else(|| (axum::http::StatusCode::BAD_REQUEST, "Missing name parameter".to_string()))?;
-    
-    let arguments = request
-        .get("arguments")
-        .cloned()
-        .unwrap_or_default();
-    
-    let result = crate::api::mcp_tools::call_tool(state, tool_name, &arguments).await;
-    
-    match result {
-        Ok(result) => {
-            let tool_result = ToolCallResult {
-                content: Some(vec![Content {
-                    content_type: "text".to_string(),
-                    text: serde_json::to_string(&result).unwrap(),
-                }]),
-                is_error: Some(false),
-            };
-            let response_value = serde_json::to_value(tool_result)
-                .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-            Ok(response_value)
+        .and_then(Value::as_str)
+        .ok_or_else(|| MoteError::Validation("Missing name parameter".to_string()))?;
+
+    let arguments = params.get("arguments").cloned().unwrap_or_else(|| json!({}));
+    let invocation_result = crate::api::mcp_tools::call_tool(state, tool_name, &arguments).await;
+
+    let tool_result = match invocation_result {
+        Ok(result) => ToolCallResult {
+            content: vec![Content {
+                content_type: "text".to_string(),
+                text: serde_json::to_string(&result).map_err(MoteError::Serialization)?,
+            }],
+            is_error: false,
         },
-        Err(error) => {
-            let error_response = json!({
-                "error": {
-                    "code": -32603,
-                    "message": error.to_string()
-                }
-            });
-            let response_value = serde_json::to_value(error_response)
-                .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-            Ok(response_value)
-        }
-    }
+        Err(error) => ToolCallResult {
+            content: vec![Content {
+                content_type: "text".to_string(),
+                text: error.to_string(),
+            }],
+            is_error: true,
+        },
+    };
+
+    serde_json::to_value(tool_result).map_err(MoteError::Serialization)
 }
 
-/// Handle resources/list
-async fn handle_resources_list(
-    session_store: &SessionStore,
-    request: &serde_json::Value,
-    headers: &HeaderMap,
-) -> std::result::Result<serde_json::Value, (axum::http::StatusCode, String)> {
-    // Validate session
-    let session_id = validate_session_header(session_store, headers)?;
-    let session = session_store.get_session(&session_id)
-        .ok_or_else(|| (axum::http::StatusCode::BAD_REQUEST, "Session not found".to_string()))?;
-    
-    if !session.initialized {
-        return Err((axum::http::StatusCode::BAD_REQUEST, "Session not initialized".to_string()));
-    }
-    
-    // Update activity
-    session_store.update_activity(&session_id);
-    
+async fn handle_resources_list(session_store: &SessionStore, headers: &HeaderMap) -> Result<Value> {
+    validate_session_header(session_store, headers)?;
     let resources = crate::api::mcp_resources::get_concrete_resources();
-    let response_value = serde_json::to_value(resources)
-        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    Ok(response_value)
+    serde_json::to_value(resources).map_err(MoteError::Serialization)
 }
 
-/// Handle resources/templates/list
-async fn handle_resources_templates_list(
-    session_store: &SessionStore,
-    request: &serde_json::Value,
-    headers: &HeaderMap,
-) -> std::result::Result<serde_json::Value, (axum::http::StatusCode, String)> {
-    // Validate session
-    let session_id = validate_session_header(session_store, headers)?;
-    let session = session_store.get_session(&session_id)
-        .ok_or_else(|| (axum::http::StatusCode::BAD_REQUEST, "Session not found".to_string()))?;
-    
-    if !session.initialized {
-        return Err((axum::http::StatusCode::BAD_REQUEST, "Session not initialized".to_string()));
-    }
-    
-    // Update activity
-    session_store.update_activity(&session_id);
-    
+async fn handle_resources_templates_list(session_store: &SessionStore, headers: &HeaderMap) -> Result<Value> {
+    validate_session_header(session_store, headers)?;
     let templates = crate::api::mcp_resources::get_resource_templates();
-    let response_value = serde_json::to_value(templates)
-        .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    Ok(response_value)
+    serde_json::to_value(templates).map_err(MoteError::Serialization)
 }
 
-/// Handle resources/read
 async fn handle_resources_read(
     state: &AppState,
     session_store: &SessionStore,
-    request: &serde_json::Value,
+    request: &Value,
     headers: &HeaderMap,
-) -> std::result::Result<serde_json::Value, (axum::http::StatusCode, String)> {
-    // Validate session
-    let session_id = validate_session_header(session_store, headers)?;
-    let session = session_store.get_session(&session_id)
-        .ok_or_else(|| (axum::http::StatusCode::BAD_REQUEST, "Session not found".to_string()))?;
-    
-    if !session.initialized {
-        return Err((axum::http::StatusCode::BAD_REQUEST, "Session not initialized".to_string()));
-    }
-    
-    // Update activity
-    session_store.update_activity(&session_id);
-    
-    // Extract URI from request
-    let uri = request
+) -> Result<Value> {
+    validate_session_header(session_store, headers)?;
+
+    let params = request
+        .get("params")
+        .ok_or_else(|| MoteError::Validation("Missing params".to_string()))?;
+
+    let uri = params
         .get("uri")
-        .and_then(|v| v.as_str())
-        .ok_or_else(|| (axum::http::StatusCode::BAD_REQUEST, "Missing uri parameter".to_string()))?;
-    
-    // Dispatch to resource handler
-    let result = crate::api::mcp_resources::read_resource(state, uri).await;
-    
-    match result {
-        Ok(resource_result) => {
-            let response_value = serde_json::to_value(resource_result)
-                .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-            Ok(response_value)
-        },
-        Err(error) => {
-            let error_response = json!({
-                "error": {
-                    "code": -32603,
-                    "message": error.to_string()
-                }
-            });
-            let response_value = serde_json::to_value(error_response)
-                .map_err(|e| (axum::http::StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-            Ok(response_value)
-        }
-    }
+        .and_then(Value::as_str)
+        .ok_or_else(|| MoteError::Validation("Missing uri parameter".to_string()))?;
+
+    let resource_result = crate::api::mcp_resources::read_resource(state, uri).await?;
+    serde_json::to_value(resource_result).map_err(MoteError::Serialization)
 }
 
-/// Handle GET /mcp requests (returns 405 Method Not Allowed)
-pub async fn handle_mcp_get() -> std::result::Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
-    Err((axum::http::StatusCode::METHOD_NOT_ALLOWED, "GET method not allowed on /mcp endpoint".to_string()))
-}
-
-/// Handle DELETE /mcp requests (session termination)
-pub async fn handle_mcp_delete(
-    State(_state): State<Arc<AppState>>,
-    headers: HeaderMap,
-) -> std::result::Result<Json<serde_json::Value>, (axum::http::StatusCode, String)> {
-    let session_store = SessionStore::new();
-    
-    // Extract session ID from headers
-    let session_id = headers
-        .get("mcp-session-id")
-        .and_then(|id| id.to_str().ok())
-        .ok_or_else(|| (axum::http::StatusCode::BAD_REQUEST, "Missing Mcp-Session-Id header".to_string()))?;
-    
-    // Validate session exists
-    let _session = session_store.get_session(&session_id)
-        .ok_or_else(|| (axum::http::StatusCode::BAD_REQUEST, "Session not found".to_string()))?;
-    
-    // Remove session
-    if session_store.remove_session(&session_id) {
-        Ok(Json(json!({ "status": "terminated" })))
-    } else {
-        Err((axum::http::StatusCode::NOT_FOUND, "Session not found".to_string()))
-    }
-}
-
-/// Handle ping
-async fn handle_ping(
-    headers: &HeaderMap,
-) -> std::result::Result<serde_json::Value, (axum::http::StatusCode, String)> {
+async fn handle_ping(session_store: &SessionStore, headers: &HeaderMap) -> Result<Value> {
+    validate_session_header(session_store, headers)?;
     Ok(json!({}))
 }
 
-/// Handle unknown method
-async fn handle_unknown_method(
-    request: &serde_json::Value,
-    headers: &HeaderMap,
-) -> std::result::Result<serde_json::Value, (axum::http::StatusCode, String)> {
-    let request_id = request
-        .get("id")
-        .and_then(|id| id.as_str())
-        .unwrap_or("unknown");
-    
-    Ok(json!({
-        "jsonrpc": "2.0",
-        "error": {
-            "code": -32601,
-            "message": format!("Method not found: {}", 
-                request.get("method").and_then(|m| m.as_str()).unwrap_or("unknown"))
-        },
-        "id": request.get("id")
-    }))
+pub async fn handle_mcp_get() -> impl axum::response::IntoResponse {
+    StatusCode::METHOD_NOT_ALLOWED
 }
 
-/// Validate session header and return session
-fn validate_session_header(
-    session_store: &SessionStore,
-    headers: &HeaderMap,
-) -> std::result::Result<String, (axum::http::StatusCode, String)> {
-    let session_id: String = headers
-        .get("mcp-session-id")
+pub async fn handle_mcp_delete(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+) -> std::result::Result<Json<Value>, (StatusCode, String)> {
+    let allowed_origins: Vec<&str> = state.config.mcp.allowed_origins.iter().map(String::as_str).collect();
+    validate_origin(&headers, &allowed_origins)?;
+
+    let session_id = headers
+        .get(HEADER_SESSION_ID)
         .and_then(|id| id.to_str().ok())
-        .ok_or_else(|| (axum::http::StatusCode::BAD_REQUEST, "Missing Mcp-Session-Id header".to_string()))?
-        .to_string();
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, "Missing MCP-Session-Id header".to_string()))?;
 
-    let session = session_store.get_session(&session_id)
-        .ok_or_else(|| (axum::http::StatusCode::BAD_REQUEST, "Session not found".to_string()))?;
-    
+    let session = state
+        .session_store
+        .get_session(session_id)
+        .ok_or_else(|| (StatusCode::NOT_FOUND, "Session not found".to_string()))?;
+
+    validate_protocol_version_header(&headers, Some(&session.protocol_version))?;
+
+    if state.session_store.remove_session(session_id) {
+        Ok(Json(json!({ "status": "terminated" })))
+    } else {
+        Err((StatusCode::NOT_FOUND, "Session not found".to_string()))
+    }
+}
+
+fn validate_session_header(session_store: &SessionStore, headers: &HeaderMap) -> Result<String> {
+    let session_id = headers
+        .get(HEADER_SESSION_ID)
+        .and_then(|id| id.to_str().ok())
+        .ok_or_else(|| MoteError::Validation("Missing MCP-Session-Id header".to_string()))?;
+
+    let session = session_store
+        .get_session(session_id)
+        .ok_or_else(|| MoteError::NotFound("Session not found".to_string()))?;
+
     if !session.initialized {
-        return Err((axum::http::StatusCode::BAD_REQUEST, "Session not initialized".to_string()));
+        return Err(MoteError::Validation("Session not initialized".to_string()));
     }
 
-    session_store.update_activity(&session_id);
-    Ok(session_id)
-}
-
-/// Extension trait for error responses
-trait IntoErrorResponse {
-    fn into_error_response(self, request_id: &str) -> serde_json::Value;
-}
-
-impl IntoErrorResponse for MoteError {
-    fn into_error_response(self, request_id: &str) -> serde_json::Value {
-        json!({
-            "jsonrpc": "2.0",
-            "error": {
-                "code": self.json_rpc_code(),
-                "message": self.to_string(),
-                "data": {
-                    "request_id": request_id,
-                    "timestamp": chrono::Utc::now().to_rfc3339()
-                }
-            },
-            "id": Some(request_id)
-        })
-    }
+    session_store.update_activity(session_id);
+    Ok(session_id.to_string())
 }

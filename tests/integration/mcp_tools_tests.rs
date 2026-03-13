@@ -1,11 +1,10 @@
 //! Integration tests for MCP tools functionality
 
-use axum::http::{Request, Method, StatusCode, header};
+use axum::http::{Request, Method, StatusCode};
 use axum::body::Body;
 use serde_json::json;
-use tower::ServiceExt;
-
 use super::setup_test_app;
+use tower::ServiceExt;
 
 async fn initialize_mcp_session(app: &axum::Router) -> String {
     let init_request = json!({
@@ -13,9 +12,9 @@ async fn initialize_mcp_session(app: &axum::Router) -> String {
         "id": "init-1",
         "method": "initialize",
         "params": {
-            "protocol_version": "2025-03-26",
+            "protocolVersion": "2025-03-26",
             "capabilities": {},
-            "client_info": {
+            "clientInfo": {
                 "name": "test-client",
                 "version": "1.0.0"
             }
@@ -47,6 +46,8 @@ async fn initialize_mcp_session(app: &axum::Router) -> String {
     let request = Request::builder()
         .method(Method::POST)
         .uri("/mcp")
+        .header("origin", "http://localhost:3000")
+        .header("accept", "application/json, text/event-stream")
         .header("mcp-session-id", session_id)
         .header("content-type", "application/json")
         .body(Body::from(init_notify.to_string()))
@@ -72,6 +73,8 @@ async fn test_mcp_tools_list() {
     let request = Request::builder()
         .method(Method::POST)
         .uri("/mcp")
+        .header("origin", "http://localhost:3000")
+        .header("accept", "application/json, text/event-stream")
         .header("mcp-session-id", session_id)
         .header("content-type", "application/json")
         .body(Body::from(tools_request.to_string()))
@@ -122,6 +125,8 @@ async fn test_mcp_register_agent() {
     let request = Request::builder()
         .method(Method::POST)
         .uri("/mcp")
+        .header("origin", "http://localhost:3000")
+        .header("accept", "application/json, text/event-stream")
         .header("mcp-session-id", session_id)
         .header("content-type", "application/json")
         .body(Body::from(register_request.to_string()))
@@ -165,6 +170,8 @@ async fn test_mcp_tool_validation() {
     let request = Request::builder()
         .method(Method::POST)
         .uri("/mcp")
+        .header("origin", "http://localhost:3000")
+        .header("accept", "application/json, text/event-stream")
         .header("mcp-session-id", &session_id)
         .header("content-type", "application/json")
         .body(Body::from(register_request.to_string()))
@@ -177,7 +184,7 @@ async fn test_mcp_tool_validation() {
     let response_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     
     let result = response_json.get("result").unwrap();
-    assert_eq!(result.get("is_error").unwrap().as_bool().unwrap(), true);
+    assert!(result.get("isError").unwrap().as_bool().unwrap());
     
     let content = result.get("content").unwrap().as_array().unwrap();
     let error_text = content[0].get("text").unwrap().as_str().unwrap();
@@ -202,6 +209,8 @@ async fn test_mcp_unknown_tool() {
     let request = Request::builder()
         .method(Method::POST)
         .uri("/mcp")
+        .header("origin", "http://localhost:3000")
+        .header("accept", "application/json, text/event-stream")
         .header("mcp-session-id", session_id)
         .header("content-type", "application/json")
         .body(Body::from(unknown_request.to_string()))
@@ -214,7 +223,7 @@ async fn test_mcp_unknown_tool() {
     let response_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     
     let result = response_json.get("result").unwrap();
-    assert_eq!(result.get("is_error").unwrap().as_bool().unwrap(), true);
+    assert!(result.get("isError").unwrap().as_bool().unwrap());
     
     let content = result.get("content").unwrap().as_array().unwrap();
     let error_text = content[0].get("text").unwrap().as_str().unwrap();
@@ -243,6 +252,8 @@ async fn test_mcp_tool_parameter_types() {
     let request = Request::builder()
         .method(Method::POST)
         .uri("/mcp")
+        .header("origin", "http://localhost:3000")
+        .header("accept", "application/json, text/event-stream")
         .header("mcp-session-id", session_id)
         .header("content-type", "application/json")
         .body(Body::from(query_request.to_string()))
@@ -256,8 +267,8 @@ async fn test_mcp_tool_parameter_types() {
     
     let result = response_json.get("result").unwrap();
     // Should not be an error (even if the tool fails internally, parameter validation should pass)
-    let is_error = result.get("is_error").unwrap().as_bool().unwrap_or(false);
-    // We don't assert on is_error here as the tool might fail for other reasons
+    let _is_error = result.get("isError").unwrap().as_bool().unwrap_or(false);
+    // We don't assert on isError here as the tool might fail for other reasons
 }
 
 #[tokio::test]
@@ -292,6 +303,8 @@ async fn test_mcp_tool_schema_validation() {
     let request = Request::builder()
         .method(Method::POST)
         .uri("/mcp")
+        .header("origin", "http://localhost:3000")
+        .header("accept", "application/json, text/event-stream")
         .header("mcp-session-id", session_id)
         .header("content-type", "application/json")
         .body(Body::from(publish_request.to_string()))

@@ -1,4 +1,4 @@
-use super::setup_test_app;
+use super::{setup_test_app, test_database_url};
 use sqlx::Row;
 
 #[tokio::test]
@@ -9,10 +9,7 @@ async fn test_dynamic_schema_embedding_column_dimension() {
     // We need to extract this from the router by making a request and checking the config
     // For now, we'll query the database directly using the test database URL
     
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql://postgres:password@localhost:5432/mote_test".to_string());
-    
-    let pool = sqlx::PgPool::connect(&database_url).await
+    let pool = sqlx::PgPool::connect(&test_database_url()).await
         .expect("Failed to connect to test database");
     
     // Query the atoms table structure
@@ -32,10 +29,7 @@ async fn test_dynamic_schema_embedding_column_dimension() {
 async fn test_hnsw_index_exists() {
     let _app = setup_test_app().await;
     
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql://postgres:password@localhost:5432/mote_test".to_string());
-    
-    let pool = sqlx::PgPool::connect(&database_url).await
+    let pool = sqlx::PgPool::connect(&test_database_url()).await
         .expect("Failed to connect to test database");
     
     // Check if HNSW index exists on atoms table
@@ -61,10 +55,7 @@ async fn test_hnsw_index_exists() {
 async fn test_pgvector_extension_installed() {
     let _app = setup_test_app().await;
     
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql://postgres:password@localhost:5432/mote_test".to_string());
-    
-    let pool = sqlx::PgPool::connect(&database_url).await
+    let pool = sqlx::PgPool::connect(&test_database_url()).await
         .expect("Failed to connect to test database");
     
     // Check if vector extension is installed
@@ -88,10 +79,7 @@ async fn test_migration_idempotency() {
     let _app2 = setup_test_app().await;
     
     // Verify database is still accessible
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql://postgres:password@localhost:5432/mote_test".to_string());
-    
-    let pool = sqlx::PgPool::connect(&database_url).await
+    let pool = sqlx::PgPool::connect(&test_database_url()).await
         .expect("Failed to connect to test database");
     
     // Simple query to verify database is working
@@ -107,10 +95,7 @@ async fn test_migration_idempotency() {
 async fn test_all_tables_exist() {
     let _app = setup_test_app().await;
     
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql://postgres:password@localhost:5432/mote_test".to_string());
-    
-    let pool = sqlx::PgPool::connect(&database_url).await
+    let pool = sqlx::PgPool::connect(&test_database_url()).await
         .expect("Failed to connect to test database");
     
     // List of expected tables
@@ -142,10 +127,7 @@ async fn test_all_tables_exist() {
 async fn test_foreign_key_constraints_exist() {
     let _app = setup_test_app().await;
     
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql://postgres:password@localhost:5432/mote_test".to_string());
-    
-    let pool = sqlx::PgPool::connect(&database_url).await
+    let pool = sqlx::PgPool::connect(&test_database_url()).await
         .expect("Failed to connect to test database");
     
     // Check if foreign key constraints exist
@@ -177,10 +159,7 @@ async fn test_foreign_key_constraints_exist() {
 async fn test_indexes_exist() {
     let _app = setup_test_app().await;
     
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql://postgres:password@localhost:5432/mote_test".to_string());
-    
-    let pool = sqlx::PgPool::connect(&database_url).await
+    let pool = sqlx::PgPool::connect(&test_database_url()).await
         .expect("Failed to connect to test database");
     
     // Check if indexes exist on important tables
@@ -213,10 +192,7 @@ async fn test_indexes_exist() {
 async fn test_vector_column_type() {
     let _app = setup_test_app().await;
     
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql://postgres:password@localhost:5432/mote_test".to_string());
-    
-    let pool = sqlx::PgPool::connect(&database_url).await
+    let pool = sqlx::PgPool::connect(&test_database_url()).await
         .expect("Failed to connect to test database");
     
     // Check vector column type and dimensions

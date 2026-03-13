@@ -405,9 +405,9 @@ impl EmbeddingQueue {
                                     None => best_value = Some(neighbour_value),
                                     Some(current_best) => {
                                         let higher_better = is_higher_better(metrics, metric_name);
-                                        if higher_better && neighbour_value > current_best {
-                                            best_value = Some(neighbour_value);
-                                        } else if !higher_better && neighbour_value < current_best {
+                                        if (higher_better && neighbour_value > current_best)
+                                            || (!higher_better && neighbour_value < current_best)
+                                        {
                                             best_value = Some(neighbour_value);
                                         }
                                     }

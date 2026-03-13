@@ -40,15 +40,18 @@ sudo systemctl start postgresql
 ```bash
 git clone <repository-url>
 cd mote
+cp .env.example .env        # adjust DATABASE_URL etc.
+cp config.example.toml config.toml
 cargo build
 ```
 
 ### Database Setup
 
-1. **Create Database**
+1. **Create Database and User**
 ```bash
-createdb mote
-createdb mote_test  # For testing
+psql postgres -c "CREATE USER mote WITH PASSWORD 'mote_password';"
+createdb -O mote mote
+createdb -O mote mote_test  # For testing
 ```
 
 2. **Install pgvector Extension**
@@ -58,38 +61,29 @@ psql mote_test -c "CREATE EXTENSION IF NOT EXISTS vector;"
 ```
 
 3. **Run Migrations**
-```bash
-# Install sqlx-cli if not already installed
-cargo install sqlx-cli --no-default-features --features postgres
 
-# Run migrations
-sqlx migrate run --database-url "postgresql://username@localhost/mote"
+Migrations run automatically on server start. To run them manually:
+```bash
+cargo install sqlx-cli --no-default-features --features postgres
+sqlx migrate run --database-url "postgres://mote:mote_password@localhost:5432/mote"
+```
+
+Or use the helper script:
+```bash
+./scripts/setup-test-db.sh
 ```
 
 ### Configuration
 
-1. **Copy Configuration**
+Two configuration sources:
+
+- **`.env`** — environment variables (`DATABASE_URL`, `EMBEDDING_API_KEY`, etc.). See `.env.example`.
+- **`config.toml`** — application config. See `config.example.toml`.
+
 ```bash
+cp .env.example .env
 cp config.example.toml config.toml
-```
-
-2. **Edit Configuration**
-```toml
-[hub]
-name = "local-mote"
-domain = "research" 
-listen_address = "127.0.0.1:3000"
-embedding_endpoint = "http://localhost:8080/embed"
-embedding_model = "text-embedding-ada-002"
-embedding_dimension = 1536
-
-[trust]
-reliability_threshold = 0.3
-max_atoms_per_hour = 1000
-
-[workers]
-embedding_pool_size = 4  # Lower for development
-decay_interval_minutes = 60
+# Edit both files for your environment
 ```
 
 ## Running the Application
@@ -190,18 +184,27 @@ pub async fn health_check(State(state): State<Arc<AppState>>) -> Json<HealthResp
 
 ```
 tests/
-├── unit/                  # Unit tests
-│   ├── mod.rs            # Test module entry
-│   ├── agent_tests.rs    # Agent logic tests
-│   ├── atom_tests.rs     # Atom operations tests
+├── unit/                  # Unit tests (71 tests)
+│   ├── mod.rs
+│   ├── acceptance_rules.rs
+│   ├── artifact_tests.rs
+│   ├── mcp_resources_tests.rs
+│   ├── mcp_tools_tests.rs
+│   ├── pheromone_math.rs
+│   ├── rate_limiter_tests.rs
+│   ├── suggestions_tests.rs
 │   └── ...               # Other unit tests
-├── integration/           # Integration tests
-│   ├── mod.rs            # Integration test setup
-│   ├── health_tests.rs   # Health endpoint tests
-│   ├── agent_registration_tests.rs  # Registration flow tests
-│   └── schema_tests.rs   # Database schema tests
-└── test_helpers/         # Test utilities
-    └── mod.rs            # Helper functions
+├── integration/           # Integration tests (38 tests, require DB)
+│   ├── mod.rs            # setup_test_app, initialize_session, make_tool_call helpers
+│   ├── agent_registration_tests.rs
+│   ├── coordination_test_fixed.rs  # End-to-end coordination flow
+│   ├── mcp_lifecycle_tests.rs
+│   ├── mcp_tools_tests.rs
+│   ├── schema_tests.rs
+│   └── ...
+├── test_helpers/
+│   └── mod.rs
+└── mcp-py-tests/          # Python stress tests
 ```
 
 ### Running Tests
@@ -223,12 +226,14 @@ cargo test --test unit -- --nocapture
 # Setup test database first
 ./scripts/setup-test-db.sh
 
-# Run all integration tests
-export DATABASE_URL="postgresql://postgres:password@localhost:5432/mote_test"
-cargo test --test integration
+# Run all integration tests (single-threaded to avoid DB conflicts)
+cargo test --test lib -- --test-threads=1 integration
 
-# Run specific integration test
-cargo test --test integration health_tests
+# Run a specific integration test
+cargo test --test lib -- --test-threads=1 integration::coordination_test_fixed
+
+# DATABASE_URL defaults to postgres://mote:mote_password@localhost:5432/mote_test
+# Override via environment variable if needed
 ```
 
 #### Test Coverage
@@ -267,14 +272,14 @@ mod tests {
 
 #### Integration Tests
 ```rust
-use crate::test_helpers::{setup_test_app, make_mcp_request};
+use crate::test_helpers::{setup_test_app, make_rpc_request};
 
 #[tokio::test]
 async fn test_agent_registration_flow() {
     let app = setup_test_app().await;
     
-    // Register agent
-    let response = make_mcp_request(&app, "register_agent", 
+    // Register agent using RPC endpoint
+    let response = make_rpc_request(&app, "register_agent", 
         Some(json!({"public_key": test_public_key()})), 
         Some(json!(1))
     ).await.unwrap();

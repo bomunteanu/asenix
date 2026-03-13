@@ -1,6 +1,6 @@
 //! Unit tests for MCP resources functionality
 
-use mote::api::mcp_resources::{get_concrete_resources, get_resource_templates, Resource, ResourceTemplate};
+use mote::api::mcp_resources::{get_concrete_resources, get_resource_templates};
 
 #[tokio::test]
 async fn test_get_concrete_resources() {
@@ -100,7 +100,7 @@ async fn test_resource_descriptions() {
     }
     
     // Check specific descriptions contain key terms
-    let fieldmap = &concrete.resources[0];
+    let _fieldmap = &concrete.resources[0];
     // TODO: Fix this assertion - the description contains the right text but test fails
     // assert!(fieldmap.description.contains("Synthesis"));
     // assert!(fieldmap.description.contains("domains"));

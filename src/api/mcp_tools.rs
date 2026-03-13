@@ -1,5 +1,4 @@
 use crate::api::rpc;
-use crate::domain::atom::{AtomType, AtomInput};
 use crate::error::{MoteError, Result};
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -9,6 +8,7 @@ use serde_json::{json, Value};
 pub struct Tool {
     pub name: String,
     pub description: String,
+    #[serde(rename = "inputSchema")]
     pub input_schema: Value,
 }
 
@@ -72,7 +72,7 @@ pub fn get_all_tools() -> ToolsListResult {
                         "items": {
                             "type": "object",
                             "properties": {
-                                "type": {
+                                "atom_type": {
                                     "type": "string",
                                     "enum": ["hypothesis", "finding", "negative_result", "delta", "experiment_log", "synthesis", "bounty"],
                                     "description": "Type of research atom"
@@ -111,7 +111,7 @@ pub fn get_all_tools() -> ToolsListResult {
                                     "description": "Hex-encoded Ed25519 signature for authentication"
                                 }
                             },
-                            "required": ["type", "domain", "statement", "conditions", "provenance", "signature", "artifact_tree_hash"]
+                            "required": ["atom_type", "domain", "statement", "signature"]
                         }
                     },
                     "edges": {
@@ -141,81 +141,21 @@ pub fn get_all_tools() -> ToolsListResult {
         },
         Tool {
             name: "search_atoms".to_string(),
-            description: "Search knowledge graph using filters, graph traversal, and/or embedding proximity.".to_string(),
+            description: "Search knowledge graph using filters.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "filters": {
-                        "type": "object",
-                        "properties": {
-                            "domain": {
-                                "type": "string",
-                                "description": "Filter by research domain"
-                            },
-                            "type": {
-                                "type": "string",
-                                "description": "Filter by atom type"
-                            },
-                            "lifecycle": {
-                                "type": "string",
-                                "description": "Filter by publication status"
-                            },
-                            "conditions": {
-                                "type": "object",
-                                "description": "Filter by experimental conditions"
-                            },
-                            "retracted": {
-                                "type": "boolean",
-                                "description": "Include/exclude retracted atoms"
-                            },
-                            "banned": {
-                                "type": "boolean",
-                                "description": "Include/exclude banned atoms"
-                            }
-                        }
+                    "domain": {
+                        "type": "string",
+                        "description": "Filter by research domain"
                     },
-                    "graph_traversal": {
-                        "type": "object",
-                        "properties": {
-                            "start_atom_id": {
-                                "type": "string",
-                                "description": "Starting atom ID for graph traversal"
-                            },
-                            "edge_types": {
-                                "type": "array",
-                                "items": {
-                                    "type": "string",
-                                    "description": "Types of edges to traverse"
-                                },
-                                "nullable": true
-                            },
-                            "max_depth": {
-                                "type": "integer",
-                                "description": "Maximum traversal depth"
-                            },
-                            "direction": {
-                                "type": "string",
-                                "enum": ["outgoing", "incoming", "both"],
-                                "description": "Traversal direction"
-                            }
-                        }
+                    "type": {
+                        "type": "string",
+                        "description": "Filter by atom type"
                     },
-                    "embedding_proximity": {
-                        "type": "object",
-                        "properties": {
-                            "vector": {
-                                "type": "array",
-                                "items": {
-                                    "type": "number",
-                                    "description": "Embedding vector for similarity search"
-                                },
-                                "nullable": true
-                            },
-                            "radius": {
-                                "type": "number",
-                                "description": "Search radius for embedding proximity"
-                            }
-                        }
+                    "lifecycle": {
+                        "type": "string",
+                        "description": "Filter by publication status"
                     },
                     "limit": {
                         "type": "integer",
@@ -312,19 +252,12 @@ pub fn get_all_tools() -> ToolsListResult {
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "context": {
+                    "domain": {
                         "type": "string",
-                        "description": "Optional context for suggestions"
-                    },
-                    "context_embedding": {
-                        "type": "array",
-                        "items": {
-                            "type": "number",
-                            "description": "Embedding vector for context similarity"
-                        },
+                        "description": "Research domain (optional)",
                         "nullable": true
                     },
-                    "k": {
+                    "limit": {
                         "type": "integer",
                         "description": "Number of suggestions to return"
                     }
@@ -365,7 +298,7 @@ pub async fn call_tool(
                 .ok_or_else(|| MoteError::Validation("Missing public_key parameter".to_string()))?;
             
             // Call handler
-            rpc::handle_register_agent(state, None).await
+            rpc::handle_register_agent(state, Some(json!({ "public_key": public_key }))).await
         },
         "confirm_agent" => {
             let agent_id = arguments.get("agent_id")
@@ -408,27 +341,20 @@ pub async fn call_tool(
             }))).await
         },
         "search_atoms" => {
-            // Extract filters
-            let filters_value = arguments.get("filters").unwrap_or(&json!(null));
-            
-            // Extract optional parameters
-            let limit = arguments.get("limit")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(50);
-            
-            let offset = arguments.get("offset")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0);
-            
-            // Call handler
-            rpc::handle_search_atoms(state, Some(filters_value.clone())).await
-                .map(|atoms| json!({ "atoms": atoms }))
+            // Call handler with flat arguments
+            rpc::handle_search_atoms(state, Some(arguments.clone())).await
         },
         "query_cluster" => {
-            // Extract vector and radius
-            let vector = arguments.get("vector")
+            let vector = arguments
+                .get("vector")
                 .and_then(|v| v.as_array())
-                .map(|arr| arr.iter().map(|v| v.as_i64().unwrap_or(0) as f64).collect::<Vec<_>>());
+                .ok_or_else(|| MoteError::Validation("Missing vector parameter".to_string()))?
+                .iter()
+                .map(|v| {
+                    v.as_f64()
+                        .ok_or_else(|| MoteError::Validation("vector values must be numbers".to_string()))
+                })
+                .collect::<std::result::Result<Vec<_>, _>>()?;
             
             let radius = arguments.get("radius")
                 .and_then(|v| v.as_f64())
@@ -498,22 +424,20 @@ pub async fn call_tool(
             }))).await
         },
         "get_suggestions" => {
-            // Extract optional parameters
-            let context = arguments.get("context");
-            let context_embedding = arguments.get("context_embedding");
-            let k = arguments.get("k").and_then(|v| v.as_i64()).unwrap_or(10);
+            let domain = arguments.get("domain").cloned().unwrap_or(Value::Null);
+            let limit = arguments.get("limit").and_then(|v| v.as_i64()).unwrap_or(10);
             
             // Call handler
             rpc::handle_get_suggestions(state, Some(json!({
-                "context": context,
-                "context_embedding": context_embedding,
-                "k": k,
+                "domain": domain,
+                "limit": limit,
             }))).await
         },
         "get_field_map" => {
-            // Extract domain parameter
-            let domain = arguments.get("domain")
-                .and_then(|v| v.as_str());
+            let domain = arguments
+                .get("domain")
+                .and_then(|v| v.as_str())
+                .map(str::to_string);
             
             // Call handler
             rpc::handle_get_field_map(state, Some(json!({

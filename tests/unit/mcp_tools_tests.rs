@@ -1,6 +1,6 @@
 //! Unit tests for MCP tools functionality
 
-use mote::api::mcp_tools::{get_all_tools, Tool};
+use mote::api::mcp_tools::get_all_tools;
 use serde_json::json;
 
 #[tokio::test]
@@ -54,7 +54,7 @@ async fn test_tool_schemas() {
     let items = atoms_schema.get("items").unwrap();
     let item_props = items.get("properties").unwrap().as_object().unwrap();
     
-    assert!(item_props.contains_key("type"));
+    assert!(item_props.contains_key("atom_type"));
     assert!(item_props.contains_key("domain"));
     assert!(item_props.contains_key("statement"));
     assert!(item_props.contains_key("conditions"));
@@ -62,7 +62,7 @@ async fn test_tool_schemas() {
     assert!(item_props.contains_key("artifact_tree_hash"));
     
     // Check atom type enum
-    let atom_type_enum = item_props.get("type").unwrap().get("enum").unwrap().as_array().unwrap();
+    let atom_type_enum = item_props.get("atom_type").unwrap().get("enum").unwrap().as_array().unwrap();
     assert!(atom_type_enum.contains(&json!("hypothesis")));
     assert!(atom_type_enum.contains(&json!("finding")));
     assert!(atom_type_enum.contains(&json!("negative_result")));
@@ -84,8 +84,7 @@ async fn test_tool_descriptions() {
     
     let search_atoms = result.tools.iter().find(|t| t.name == "search_atoms").unwrap();
     assert!(search_atoms.description.contains("filters"));
-    assert!(search_atoms.description.contains("graph traversal"));
-    assert!(search_atoms.description.contains("embedding proximity"));
+    assert!(search_atoms.description.contains("knowledge graph"));
     
     let query_cluster = result.tools.iter().find(|t| t.name == "query_cluster").unwrap();
     assert!(query_cluster.description.contains("embedding space"));
@@ -141,7 +140,6 @@ async fn test_optional_parameters() {
     let get_suggestions = result.tools.iter().find(|t| t.name == "get_suggestions").unwrap();
     let properties = get_suggestions.input_schema.get("properties").unwrap().as_object().unwrap();
     
-    assert!(properties.contains_key("context"));
-    assert!(properties.contains_key("context_embedding"));
-    assert!(properties.contains_key("k"));
+    assert!(properties.contains_key("domain"));
+    assert!(properties.contains_key("limit"));
 }

@@ -74,7 +74,7 @@ pub async fn put_artifact(
     let agent_row = sqlx::query(
         "SELECT public_key FROM agents WHERE agent_id = $1 AND confirmed = true"
     )
-    .bind(&agent_id)
+    .bind(agent_id)
     .fetch_optional(&state.pool)
     .await
     .map_err(|e| {
@@ -100,7 +100,7 @@ pub async fn put_artifact(
     let rate_check = sqlx::query(
         "SELECT COUNT(*) as count FROM atoms WHERE author_agent_id = $1 AND created_at > NOW() - INTERVAL '1 hour'"
     )
-    .bind(&agent_id)
+    .bind(agent_id)
     .fetch_one(&state.pool)
     .await
     .map_err(|e| {
@@ -152,7 +152,7 @@ pub async fn put_artifact(
         let storage_check = sqlx::query(
             "SELECT COALESCE(SUM(size_bytes), 0) as total FROM artifacts WHERE uploaded_by = $1"
         )
-        .bind(&agent_id)
+        .bind(agent_id)
         .fetch_one(&state.pool)
         .await
         .map_err(|e| {
@@ -226,7 +226,7 @@ pub async fn put_artifact(
     .bind(artifact_type)
     .bind(body.len() as i64)
     .bind(media_type)
-    .bind(&agent_id)
+    .bind(agent_id)
     .execute(&state.pool)
     .await
     .map_err(|e| {
@@ -502,7 +502,6 @@ pub async fn resolve_artifact_path(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use serde_json::json;
 
     #[test]

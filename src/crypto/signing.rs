@@ -22,7 +22,7 @@ pub fn verify_signature(public_key: &[u8], message: &[u8], signature: &[u8]) -> 
 pub fn generate_challenge() -> Vec<u8> {
     use rand::RngCore;
     let mut challenge = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut challenge);
+    rand::rng().fill_bytes(&mut challenge);
     challenge.to_vec()
 }
 

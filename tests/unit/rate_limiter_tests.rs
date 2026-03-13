@@ -167,7 +167,7 @@ async fn test_rate_limiter_agent_id_isolation() {
 }
 
 // Helper function to create a rate limiter with a specific start time for testing
-fn create_rate_limiter_with_time(_start_time: Instant) -> RateLimiter {
+fn _create_rate_limiter_with_time(_start_time: Instant) -> RateLimiter {
     // This is a simplified version - in practice you might need to modify
     // the RateLimiter to accept a custom clock for testing
     RateLimiter::new()

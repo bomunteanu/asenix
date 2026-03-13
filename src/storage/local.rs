@@ -64,7 +64,7 @@ impl StorageBackend for LocalStorage {
     async fn get(&self, hash: &str) -> Result<Vec<u8>, StorageError> {
         let file_path = self.get_file_path(hash);
         
-        if !fs::metadata(&file_path).await.is_ok() {
+        if fs::metadata(&file_path).await.is_err() {
             return Err(StorageError::NotFound(hash.to_string()));
         }
         

@@ -1,11 +1,12 @@
 //! Integration tests for MCP lifecycle and tools
 
-use axum::http::{Request, Method, StatusCode, header};
+use axum::http::{Request, Method, StatusCode};
 use axum::body::Body;
 use serde_json::json;
 use tower::ServiceExt;
 
 use super::setup_test_app;
+use super::initialize_session;
 
 #[tokio::test]
 async fn test_mcp_initialize_lifecycle() {
@@ -17,12 +18,12 @@ async fn test_mcp_initialize_lifecycle() {
         "id": "init-1",
         "method": "initialize",
         "params": {
-            "protocol_version": "2025-03-26",
+            "protocolVersion": "2025-03-26",
             "capabilities": {
                 "tools": {},
                 "resources": {}
             },
-            "client_info": {
+            "clientInfo": {
                 "name": "test-client",
                 "version": "1.0.0"
             }
@@ -57,6 +58,8 @@ async fn test_mcp_initialize_lifecycle() {
     let request = Request::builder()
         .method(Method::POST)
         .uri("/mcp")
+        .header("origin", "http://localhost:3000")
+        .header("accept", "application/json, text/event-stream")
         .header("mcp-session-id", session_id)
         .header("content-type", "application/json")
         .body(Body::from(init_notify.to_string()))
@@ -76,6 +79,8 @@ async fn test_mcp_initialize_lifecycle() {
     let request = Request::builder()
         .method(Method::POST)
         .uri("/mcp")
+        .header("origin", "http://localhost:3000")
+        .header("accept", "application/json, text/event-stream")
         .header("mcp-session-id", session_id)
         .header("content-type", "application/json")
         .body(Body::from(tools_request.to_string()))
@@ -95,33 +100,21 @@ async fn test_mcp_initialize_lifecycle() {
 async fn test_mcp_session_validation() {
     let app = setup_test_app().await;
     
-    // Test missing Origin header
     let init_request = json!({
         "jsonrpc": "2.0",
         "id": "init-1",
         "method": "initialize",
         "params": {
-            "protocol_version": "2025-03-26",
+            "protocolVersion": "2025-03-26",
             "capabilities": {},
-            "client_info": {
+            "clientInfo": {
                 "name": "test-client",
                 "version": "1.0.0"
             }
         }
     });
     
-    let request = Request::builder()
-        .method(Method::POST)
-        .uri("/mcp")
-        .header("accept", "application/json, text/event-stream")
-        .header("content-type", "application/json")
-        .body(Body::from(init_request.to_string()))
-        .unwrap();
-    
-    let response = app.clone().oneshot(request).await.unwrap();
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-    
-    // Test invalid Origin header
+    // Test invalid Origin header → 403 Forbidden
     let request = Request::builder()
         .method(Method::POST)
         .uri("/mcp")
@@ -132,9 +125,9 @@ async fn test_mcp_session_validation() {
         .unwrap();
     
     let response = app.clone().oneshot(request).await.unwrap();
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
     
-    // Test missing Accept header
+    // Test missing Accept header → 400 Bad Request
     let request = Request::builder()
         .method(Method::POST)
         .uri("/mcp")
@@ -145,21 +138,33 @@ async fn test_mcp_session_validation() {
     
     let response = app.clone().oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    
+    // Test no Origin (optional per MCP spec) → should proceed normally
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/mcp")
+        .header("accept", "application/json, text/event-stream")
+        .header("content-type", "application/json")
+        .body(Body::from(init_request.to_string()))
+        .unwrap();
+    
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
 }
 
 #[tokio::test]
 async fn test_mcp_session_termination() {
     let app = setup_test_app().await;
     
-    // Initialize session first
+    // Initialize session first (with camelCase fields)
     let init_request = json!({
         "jsonrpc": "2.0",
         "id": "init-1",
         "method": "initialize",
         "params": {
-            "protocol_version": "2025-03-26",
+            "protocolVersion": "2025-03-26",
             "capabilities": {},
-            "client_info": {
+            "clientInfo": {
                 "name": "test-client",
                 "version": "1.0.0"
             }
@@ -176,23 +181,26 @@ async fn test_mcp_session_termination() {
         .unwrap();
     
     let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
     let session_id = response.headers().get("mcp-session-id")
         .expect("Session ID should be returned")
         .to_str()
-        .unwrap();
+        .unwrap()
+        .to_string();
     
-    // Terminate session
+    // Terminate session via DELETE
     let request = Request::builder()
         .method(Method::DELETE)
         .uri("/mcp")
-        .header("mcp-session-id", session_id)
+        .header("origin", "http://localhost:3000")
+        .header("mcp-session-id", &session_id)
         .body(Body::empty())
         .unwrap();
     
     let response = app.clone().oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     
-    // Try to use terminated session
+    // Try to use terminated session → 404 Not Found (session gone)
     let tools_request = json!({
         "jsonrpc": "2.0",
         "id": "tools-1",
@@ -203,13 +211,15 @@ async fn test_mcp_session_termination() {
     let request = Request::builder()
         .method(Method::POST)
         .uri("/mcp")
-        .header("mcp-session-id", session_id)
+        .header("origin", "http://localhost:3000")
+        .header("accept", "application/json, text/event-stream")
+        .header("mcp-session-id", &session_id)
         .header("content-type", "application/json")
         .body(Body::from(tools_request.to_string()))
         .unwrap();
     
     let response = app.clone().oneshot(request).await.unwrap();
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -222,9 +232,9 @@ async fn test_mcp_uninitialized_session() {
         "id": "init-1",
         "method": "initialize",
         "params": {
-            "protocol_version": "2025-03-26",
+            "protocolVersion": "2025-03-26",
             "capabilities": {},
-            "client_info": {
+            "clientInfo": {
                 "name": "test-client",
                 "version": "1.0.0"
             }
@@ -247,6 +257,7 @@ async fn test_mcp_uninitialized_session() {
         .unwrap();
     
     // Try to use tools before initialized notification
+    // Server returns HTTP 200 with JSON-RPC error for requests with an id
     let tools_request = json!({
         "jsonrpc": "2.0",
         "id": "tools-1",
@@ -257,65 +268,29 @@ async fn test_mcp_uninitialized_session() {
     let request = Request::builder()
         .method(Method::POST)
         .uri("/mcp")
+        .header("origin", "http://localhost:3000")
+        .header("accept", "application/json, text/event-stream")
         .header("mcp-session-id", session_id)
         .header("content-type", "application/json")
         .body(Body::from(tools_request.to_string()))
         .unwrap();
     
     let response = app.clone().oneshot(request).await.unwrap();
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(response.status(), StatusCode::OK);
+    
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let response_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    
+    // Should contain a JSON-RPC error about session not initialized
+    let error = response_json.get("error").expect("Should have error field");
+    assert!(error.get("code").is_some());
+    assert!(error.get("message").unwrap().as_str().unwrap().contains("not initialized"));
 }
 
 #[tokio::test]
 async fn test_mcp_ping() {
     let app = setup_test_app().await;
-    
-    // Initialize session
-    let init_request = json!({
-        "jsonrpc": "2.0",
-        "id": "init-1",
-        "method": "initialize",
-        "params": {
-            "protocol_version": "2025-03-26",
-            "capabilities": {},
-            "client_info": {
-                "name": "test-client",
-                "version": "1.0.0"
-            }
-        }
-    });
-    
-    let request = Request::builder()
-        .method(Method::POST)
-        .uri("/mcp")
-        .header("origin", "http://localhost:3000")
-        .header("accept", "application/json, text/event-stream")
-        .header("content-type", "application/json")
-        .body(Body::from(init_request.to_string()))
-        .unwrap();
-    
-    let response = app.clone().oneshot(request).await.unwrap();
-    let session_id = response.headers().get("mcp-session-id")
-        .expect("Session ID should be returned")
-        .to_str()
-        .unwrap();
-    
-    // Send initialized notification
-    let init_notify = json!({
-        "jsonrpc": "2.0",
-        "method": "notifications/initialized",
-        "params": {}
-    });
-    
-    let request = Request::builder()
-        .method(Method::POST)
-        .uri("/mcp")
-        .header("mcp-session-id", session_id)
-        .header("content-type", "application/json")
-        .body(Body::from(init_notify.to_string()))
-        .unwrap();
-    
-    app.clone().oneshot(request).await.unwrap();
+    let session_id = initialize_session(&app).await;
     
     // Test ping
     let ping_request = json!({
@@ -328,7 +303,9 @@ async fn test_mcp_ping() {
     let request = Request::builder()
         .method(Method::POST)
         .uri("/mcp")
-        .header("mcp-session-id", session_id)
+        .header("origin", "http://localhost:3000")
+        .header("accept", "application/json, text/event-stream")
+        .header("mcp-session-id", &session_id)
         .header("content-type", "application/json")
         .body(Body::from(ping_request.to_string()))
         .unwrap();
@@ -346,53 +323,7 @@ async fn test_mcp_ping() {
 #[tokio::test]
 async fn test_mcp_unknown_method() {
     let app = setup_test_app().await;
-    
-    // Initialize session
-    let init_request = json!({
-        "jsonrpc": "2.0",
-        "id": "init-1",
-        "method": "initialize",
-        "params": {
-            "protocol_version": "2025-03-26",
-            "capabilities": {},
-            "client_info": {
-                "name": "test-client",
-                "version": "1.0.0"
-            }
-        }
-    });
-    
-    let request = Request::builder()
-        .method(Method::POST)
-        .uri("/mcp")
-        .header("origin", "http://localhost:3000")
-        .header("accept", "application/json, text/event-stream")
-        .header("content-type", "application/json")
-        .body(Body::from(init_request.to_string()))
-        .unwrap();
-    
-    let response = app.clone().oneshot(request).await.unwrap();
-    let session_id = response.headers().get("mcp-session-id")
-        .expect("Session ID should be returned")
-        .to_str()
-        .unwrap();
-    
-    // Send initialized notification
-    let init_notify = json!({
-        "jsonrpc": "2.0",
-        "method": "notifications/initialized",
-        "params": {}
-    });
-    
-    let request = Request::builder()
-        .method(Method::POST)
-        .uri("/mcp")
-        .header("mcp-session-id", session_id)
-        .header("content-type", "application/json")
-        .body(Body::from(init_notify.to_string()))
-        .unwrap();
-    
-    app.clone().oneshot(request).await.unwrap();
+    let session_id = initialize_session(&app).await;
     
     // Test unknown method
     let unknown_request = json!({
@@ -405,7 +336,9 @@ async fn test_mcp_unknown_method() {
     let request = Request::builder()
         .method(Method::POST)
         .uri("/mcp")
-        .header("mcp-session-id", session_id)
+        .header("origin", "http://localhost:3000")
+        .header("accept", "application/json, text/event-stream")
+        .header("mcp-session-id", &session_id)
         .header("content-type", "application/json")
         .body(Body::from(unknown_request.to_string()))
         .unwrap();

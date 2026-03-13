@@ -181,7 +181,7 @@ class MoteLoadTestAgent:
         signature = self.private_key.sign(challenge_bytes)
         signature_hex = binascii.hexlify(signature).decode()
         
-        success, latency, response = await self.make_mcp_request(
+        success, latency, response = await self.make_rpc_request(
             session, "confirm_agent", {
                 "agent_id": self.registered_agent_id,
                 "signature": signature_hex
@@ -241,7 +241,7 @@ class MoteLoadTestAgent:
             "atoms": [atom_data]
         }
         
-        success, latency, response = await self.make_mcp_request(
+        success, latency, response = await self.make_rpc_request(
             session, "publish_atoms", final_request, self.agent_id * 1000 + 3
         )
         
@@ -304,7 +304,7 @@ class MoteLoadTestAgent:
             "atoms": [atom_data]
         }
         
-        success, latency, response = await self.make_mcp_request(
+        success, latency, response = await self.make_rpc_request(
             session, "publish_atoms", final_request, self.agent_id * 1000 + 4
         )
         
@@ -313,7 +313,7 @@ class MoteLoadTestAgent:
     
     async def search(self, session):
         """Search for atoms"""
-        success, latency, response = await self.make_mcp_request(
+        success, latency, response = await self.make_rpc_request(
             session, "search_atoms", {
                 "domain": random.choice(["machine_learning", "nlp", "computer_vision"]),
                 "atom_types": random.sample(["bounty", "finding"], k=random.randint(1, 2))
@@ -325,7 +325,7 @@ class MoteLoadTestAgent:
     
     async def get_suggestions(self, session):
         """Get suggestions from Mote"""
-        success, latency, response = await self.make_mcp_request(
+        success, latency, response = await self.make_rpc_request(
             session, "get_suggestions", {
                 "context": {"domain": random.choice(["machine_learning", "nlp", "computer_vision"])},
                 "k": random.randint(5, 20)
@@ -340,7 +340,7 @@ class MoteLoadTestAgent:
         if not self.registered_agent_id:
             return False
         
-        success, latency, response = await self.make_mcp_request(
+        success, latency, response = await self.make_rpc_request(
             session, "claim_direction", {
                 "agent_id": self.registered_agent_id,
                 "context": {"domain": random.choice(["machine_learning", "nlp", "computer_vision"])},

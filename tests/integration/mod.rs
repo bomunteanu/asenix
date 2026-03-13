@@ -8,30 +8,29 @@ mod mcp_lifecycle_tests;
 mod mcp_tools_tests;
 
 use axum::Router;
+use axum::http::{Request, Method};
+use axum::body::Body;
 use tower::ServiceExt;
 use std::env;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::broadcast;
+use serde_json::json;
 use mote::config::Config;
 use mote::state::AppState;
 use mote::api;
 use mote::db::pool::create_pool;
 use mote::storage::LocalStorage;
 
+/// Default test database URL, overridable via DATABASE_URL env var.
+pub fn test_database_url() -> String {
+    env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://mote:mote_password@localhost:5432/mote_test".to_string())
+}
+
 /// Test helper that sets up a clean database and returns a router ready for testing
 pub async fn setup_test_app() -> Router {
-    // Load test configuration with flexible database URL
-    let database_url = env::var("DATABASE_URL")
-        .unwrap_or_else(|_| {
-            // Try Docker Compose database first
-            if env::var("DOCKER_ENV").unwrap_or_default() == "true" {
-                "postgres://mote:mote_password@localhost:5432/mote".to_string()
-            } else {
-                // Fallback to local test database
-                "postgresql://postgres:password@localhost:5432/mote_test".to_string()
-            }
-        });
+    let database_url = test_database_url();
     
     let pool = sqlx::PgPool::connect(&database_url)
         .await
@@ -107,7 +106,8 @@ pub async fn setup_test_app() -> Router {
     Router::new()
         .route("/health", axum::routing::get(api::handlers::health_check))
         .route("/metrics", axum::routing::get(api::handlers::metrics))
-        .route("/mcp", axum::routing::post(api::mcp_server::handle_mcp_request))
+        .route("/mcp", axum::routing::post(api::mcp_server::handle_mcp_request)
+            .delete(api::mcp_server::handle_mcp_delete))
         .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB limit
         .with_state(Arc::new(state))
 }
@@ -133,14 +133,14 @@ async fn truncate_all_tables(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-/// Helper to make JSON-RPC requests to the test router
+/// Helper to make JSON-RPC requests to the test router (with MCP-required headers)
 pub async fn make_mcp_request(
     router: &Router,
     method: &str,
     params: Option<serde_json::Value>,
     id: Option<serde_json::Value>,
 ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
-    let request = serde_json::json!({
+    let request = json!({
         "jsonrpc": "2.0",
         "method": method,
         "params": params,
@@ -150,11 +150,13 @@ pub async fn make_mcp_request(
     let response = router
         .clone()
         .oneshot(
-            axum::http::Request::builder()
-                .method(axum::http::Method::POST)
+            Request::builder()
+                .method(Method::POST)
                 .uri("/mcp")
-                .header(axum::http::header::CONTENT_TYPE, "application/json")
-                .body(axum::body::Body::from(request.to_string()))
+                .header("origin", "http://localhost:3000")
+                .header("accept", "application/json, text/event-stream")
+                .header("content-type", "application/json")
+                .body(Body::from(request.to_string()))
                 .unwrap()
         )
         .await
@@ -166,6 +168,153 @@ pub async fn make_mcp_request(
 
     let response_json: serde_json::Value = serde_json::from_str(&response_text)?;
     Ok(response_json)
+}
+
+/// Initialize an MCP session and return the session ID
+pub async fn initialize_session(router: &Router) -> String {
+    let init_request = json!({
+        "jsonrpc": "2.0",
+        "id": "init-1",
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-03-26",
+            "capabilities": {},
+            "clientInfo": {
+                "name": "test-client",
+                "version": "1.0.0"
+            }
+        }
+    });
+
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/mcp")
+                .header("origin", "http://localhost:3000")
+                .header("accept", "application/json, text/event-stream")
+                .header("content-type", "application/json")
+                .body(Body::from(init_request.to_string()))
+                .unwrap()
+        )
+        .await
+        .unwrap();
+
+    let session_id = response.headers().get("mcp-session-id")
+        .expect("Session ID should be returned")
+        .to_str()
+        .unwrap()
+        .to_string();
+
+    // Send initialized notification
+    let init_notify = json!({
+        "jsonrpc": "2.0",
+        "method": "notifications/initialized",
+        "params": {}
+    });
+
+    router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/mcp")
+                .header("origin", "http://localhost:3000")
+                .header("accept", "application/json, text/event-stream")
+                .header("mcp-session-id", &session_id)
+                .header("content-type", "application/json")
+                .body(Body::from(init_notify.to_string()))
+                .unwrap()
+        )
+        .await
+        .unwrap();
+
+    session_id
+}
+
+/// Call an MCP tool via tools/call, returning a response shaped like the old
+/// direct-dispatch format: { "jsonrpc": "2.0", "result": <inner>, "error": null, "id": <id> }
+pub async fn make_tool_call(
+    router: &Router,
+    session_id: &str,
+    tool_name: &str,
+    arguments: serde_json::Value,
+    id: serde_json::Value,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    let request_body = json!({
+        "jsonrpc": "2.0",
+        "method": "tools/call",
+        "params": {
+            "name": tool_name,
+            "arguments": arguments
+        },
+        "id": id
+    });
+
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method(Method::POST)
+                .uri("/mcp")
+                .header("origin", "http://localhost:3000")
+                .header("accept", "application/json, text/event-stream")
+                .header("mcp-session-id", session_id)
+                .header("content-type", "application/json")
+                .body(Body::from(request_body.to_string()))
+                .unwrap()
+        )
+        .await
+        .unwrap();
+
+    let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let response_json: serde_json::Value = serde_json::from_slice(&body)?;
+
+    // Check for JSON-RPC level error
+    if let Some(error) = response_json.get("error") {
+        if !error.is_null() {
+            return Ok(json!({
+                "jsonrpc": "2.0",
+                "error": error,
+                "id": response_json.get("id")
+            }));
+        }
+    }
+
+    // Parse ToolCallResult from result field
+    let result = response_json.get("result")
+        .ok_or("Missing result field")?;
+    let is_error = result.get("isError")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let content = result.get("content")
+        .and_then(|v| v.as_array())
+        .ok_or("Missing content array")?;
+    let text = content.first()
+        .and_then(|c| c.get("text"))
+        .and_then(|v| v.as_str())
+        .ok_or("Missing text in content")?;
+
+    if is_error {
+        Ok(json!({
+            "jsonrpc": "2.0",
+            "error": {
+                "code": -32000,
+                "message": text
+            },
+            "id": id
+        }))
+    } else {
+        let inner_result: serde_json::Value = serde_json::from_str(text)
+            .unwrap_or_else(|_| json!(text));
+        Ok(json!({
+            "jsonrpc": "2.0",
+            "result": inner_result,
+            "error": null,
+            "id": id
+        }))
+    }
 }
 
 /// Helper to make HTTP requests to the test router
@@ -201,3 +350,4 @@ pub async fn make_http_request(
         Ok((parts.status, body_text))
     }
 }
+

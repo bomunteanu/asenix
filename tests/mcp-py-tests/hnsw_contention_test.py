@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 class HNSWContentionTest:
     def __init__(self, base_url="http://localhost:3000"):
         self.base_url = base_url
+        self.rpc_url = f"{base_url}/rpc"
         self.mcp_url = f"{base_url}/mcp"
         self.metrics_url = f"{base_url}/metrics"
         self.agents = []
@@ -37,12 +38,9 @@ class HNSWContentionTest:
             "jsonrpc": "2.0",
             "method": "initialize",
             "params": {
-                "protocol_version": "2025-03-26",
-                "capabilities": {
-                    "tools": {},
-                    "resources": {}
-                },
-                "client_info": {
+                "protocolVersion": "2025-03-26",
+                "capabilities": {},
+                "clientInfo": {
                     "name": f"hnsw-test-agent-{agent_id}",
                     "version": "1.0.0"
                 }
@@ -61,23 +59,24 @@ class HNSWContentionTest:
             if 'result' not in result:
                 return None
             
-            session_id = result['result'].get('session_id')
+            session_id = response.headers.get('mcp-session-id')
+            if not session_id:
+                return None
         
         # Send initialized notification
         notify_payload = {
             "jsonrpc": "2.0",
             "method": "notifications/initialized",
-            "params": {},
-            "id": agent_id * 1000 + 1
+            "params": {}
         }
         
         notify_headers = headers.copy()
         notify_headers["mcp-session-id"] = session_id
         
         async with session.post(self.mcp_url, json=notify_payload, headers=notify_headers) as response:
-            await response.json()  # We don't care about the response
+            await response.read()  # We don't care about the response
         
-        # Register agent
+        # Register agent via RPC
         reg_payload = {
             "jsonrpc": "2.0",
             "method": "register_agent",
@@ -87,10 +86,7 @@ class HNSWContentionTest:
             "id": agent_id * 1000 + 2
         }
         
-        reg_headers = headers.copy()
-        reg_headers["mcp-session-id"] = session_id
-        
-        async with session.post(self.mcp_url, json=reg_payload, headers=reg_headers) as response:
+        async with session.post(self.rpc_url, json=reg_payload) as response:
             result = await response.json()
             if 'result' in result:
                 agent_info = {
@@ -115,10 +111,7 @@ class HNSWContentionTest:
                     "id": agent_id * 1000 + 3
                 }
                 
-                conf_headers = headers.copy()
-                conf_headers["mcp-session-id"] = session_id
-                
-                async with session.post(self.mcp_url, json=conf_payload, headers=conf_headers) as response:
+                async with session.post(self.rpc_url, json=conf_payload) as response:
                     conf_result = await response.json()
                     if 'result' in conf_result:
                         return agent_info
@@ -193,7 +186,7 @@ class HNSWContentionTest:
         }
         
         start_time = time.time()
-        async with session.post(self.mcp_url, json=payload) as response:
+        async with session.post(self.rpc_url, json=payload) as response:
             result = await response.json()
             latency = time.time() - start_time
             
@@ -226,18 +219,9 @@ class HNSWContentionTest:
                 "id": int(time.time() * 1000 + i) % 1000000
             }
             
-            headers = {
-                "content-type": "application/json",
-                "origin": "http://localhost:3000",
-                "accept": "application/json, text/event-stream"
-            }
-            
-            if agent.get('session_id'):
-                headers["mcp-session-id"] = agent['session_id']
-            
             start_time = time.time()
             try:
-                async with session.post(self.mcp_url, json=payload, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                async with session.post(self.rpc_url, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as response:
                     result = await response.json()
                     latency = time.time() - start_time
                     search_latencies.append(latency)
@@ -282,7 +266,7 @@ class HNSWContentionTest:
             
             start_time = time.time()
             try:
-                async with session.post(self.mcp_url, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as response:
+                async with session.post(self.rpc_url, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as response:
                     result = await response.json()
                     latency = time.time() - start_time
                     suggestion_latencies.append(latency)

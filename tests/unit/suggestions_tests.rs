@@ -2,7 +2,7 @@
 //! Tests the get_suggestions functionality including context validation,
 //! filtering, ranking by pheromone attraction, and response formatting.
 
-use serde_json::{json, Value};
+use serde_json::json;
 
 #[cfg(test)]
 mod tests {

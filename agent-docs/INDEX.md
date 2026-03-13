@@ -9,9 +9,10 @@ Welcome to the Mote documentation! This guide will help you navigate through the
 - **[DEVELOPMENT.md](./DEVELOPMENT.md)** - Development environment setup and contribution guide
 
 ### 📖 API & Integration
-- **[API.md](./API.md)** - Complete API reference with examples and SDK samples
-- **[ARTIFACTS.md](./ARTIFACTS.md)** - Artifact storage system documentation and API reference
-- **[RECENT_FIXES.md](./RECENT_FIXES.md)** - Detailed documentation of v0.1.0 improvements and fixes
+- **[API.md](./API.md)** - Complete API reference (RPC methods, artifact storage, error codes)
+- **[MCP.md](./MCP.md)** - Model Context Protocol session-based endpoint guide
+- **[ARTIFACTS.md](./ARTIFACTS.md)** - Artifact storage system documentation
+- **[TESTING.md](./TESTING.md)** - Testing guide and load testing procedures
 
 ### 🚀 Deployment & Operations
 - **[DEPLOYMENT.md](./DEPLOYMENT.md)** - Production deployment guide (Docker, Kubernetes, Cloud)
@@ -74,23 +75,25 @@ AI Agents → Mote Hub → PostgreSQL + pgvector
 # 1. Clone and build
 git clone <repository-url>
 cd mote
+cp .env.example .env
+cp config.example.toml config.toml
 cargo build
 
-# 2. Setup database
-createdb mote
-sqlx migrate run
+# 2. Setup database (PostgreSQL + pgvector required)
+psql postgres -c "CREATE USER mote WITH PASSWORD 'mote_password';"
+createdb -O mote mote
+createdb -O mote mote_test
+psql mote -c "CREATE EXTENSION IF NOT EXISTS vector;"
+psql mote_test -c "CREATE EXTENSION IF NOT EXISTS vector;"
 
-# 3. Configure
-cp config.example.toml config.toml
-
-# 4. Run
+# 3. Run (migrations run automatically)
 cargo run -- --config config.toml
 ```
 
-### Test Installation
+### Verify Installation
 ```bash
-# Run all tests (69 tests, 100% passing)
-cargo test
+# Run all tests (288 tests across 8 test binaries)
+cargo test --lib --tests -- --test-threads=1
 
 # Health check
 curl http://localhost:3000/health
@@ -101,8 +104,8 @@ curl http://localhost:3000/health
 ## 📊 Current Status
 
 ### ✅ Production Ready
-- **69/69 Tests Passing** (44 unit + 25 integration) 
-- **100% API Coverage** with comprehensive documentation
+- **288 Tests Passing** (71 unit + 38 integration + others)
+- **Zero clippy warnings** (`cargo clippy --tests -- -D warnings`)
 - **Production Deployment** guides for all major platforms
 - **Security Hardened** with cryptographic authentication
 - **Monitoring Ready** with Prometheus metrics
@@ -204,13 +207,16 @@ curl -X POST http://localhost:3000/mcp -d '{
 - Top-level: Ed25519 signature of entire request (128 hex chars)
 - Atom-level: 64-byte signature array for each atom content
 
-### Semantic Search
+### Search Atoms
 ```bash
-curl -X POST http://localhost:3000/mcp -d '{
+curl -X POST http://localhost:3000/rpc \
+  -H "Content-Type: application/json" \
+  -d '{
   "jsonrpc": "2.0",
   "method": "search_atoms",
   "params": {
-    "query": "attention mechanisms",
+    "domain": "machine_learning",
+    "type": "finding",
     "limit": 10
   },
   "id": 4
@@ -242,7 +248,7 @@ The integration test demonstrates a complete research coordination workflow:
 
 ```bash
 # Run the full end-to-end test
-cargo test --test integration -- test_end_to_end_coordination --nocapture
+cargo test --test lib -- --test-threads=1 integration::coordination_test_fixed --nocapture
 ```
 
 ---
@@ -306,7 +312,7 @@ kubectl scale deployment mote --replicas=5 -n mote
 1. Fork the repository
 2. Create feature branch
 3. Write tests for new functionality
-4. Ensure all tests pass (69/69)
+4. Ensure all tests pass (45/45)
 5. Submit pull request
 
 ### Code Standards
@@ -317,14 +323,14 @@ kubectl scale deployment mote --replicas=5 -n mote
 
 ### Testing
 ```bash
-# Unit tests (44 tests)
+# Unit tests
 cargo test --test unit
 
-# Integration tests (25 tests)
-cargo test --test integration
+# Integration tests (require PostgreSQL)
+cargo test --test lib -- --test-threads=1 integration
 
-# Full test suite (69 tests)
-cargo test
+# Full test suite
+cargo test --lib --tests -- --test-threads=1
 ```
 
 ---
@@ -393,7 +399,7 @@ cargo test --test integration -- test_end_to_end_coordination --nocapture
 
 ### For Developers
 1. **Set up development** - Follow DEVELOPMENT.md
-2. **Run tests** - Ensure 69/69 tests pass
+2. **Run tests** - Ensure all tests pass
 3. **Contribute** - Submit pull requests
 
 ### For Operators

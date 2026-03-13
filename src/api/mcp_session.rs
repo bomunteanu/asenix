@@ -1,8 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
+use serde::Deserialize;
 
 /// MCP session information
 #[derive(Debug, Clone)]
@@ -24,7 +23,7 @@ pub struct ClientInfo {
 }
 
 /// Server capabilities
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct Capabilities {
     #[serde(default)]
     pub tools: Option<ToolsCapability>,
@@ -32,26 +31,17 @@ pub struct Capabilities {
     pub resources: Option<ResourcesCapability>,
 }
 
-impl Default for Capabilities {
-    fn default() -> Self {
-        Self {
-            tools: None,
-            resources: None,
-        }
-    }
-}
-
 /// Tools capability
 #[derive(Debug, Clone, Deserialize)]
 pub struct ToolsCapability {
-    #[serde(default)]
+    #[serde(default, rename = "listChanged")]
     pub list_changed: Option<bool>,
 }
 
 /// Resources capability  
 #[derive(Debug, Clone, Deserialize)]
 pub struct ResourcesCapability {
-    #[serde(default)]
+    #[serde(default, rename = "listChanged")]
     pub list_changed: Option<bool>,
 }
 
@@ -59,12 +49,18 @@ pub struct ResourcesCapability {
 pub struct SessionStore {
     /// Sessions storage - made public for tests
     pub sessions: Arc<Mutex<HashMap<String, Session>>>,
+    pub session_ttl: Duration,
 }
 
 impl SessionStore {
     pub fn new() -> Self {
+        Self::with_ttl_seconds(3600)
+    }
+
+    pub fn with_ttl_seconds(session_ttl_seconds: u64) -> Self {
         Self {
             sessions: Arc::new(Mutex::new(HashMap::new())),
+            session_ttl: Duration::from_secs(session_ttl_seconds),
         }
     }
 
@@ -97,14 +93,19 @@ impl SessionStore {
 
     /// Update session activity timestamp
     pub fn update_activity(&self, session_id: &str) -> bool {
-        if let Some(session) = self.get_session(session_id) {
-            let mut sessions = self.sessions.lock().unwrap();
-            if let Some(s) = sessions.get_mut(session_id) {
-                s.last_active_at = Instant::now();
-                true
-            } else {
-                false
+        {
+            // First check if session exists without holding the lock
+            let sessions = self.sessions.lock().unwrap();
+            if !sessions.contains_key(session_id) {
+                return false;
             }
+        } // Drop the lock here
+        
+        // Now acquire lock again for the update
+        let mut sessions = self.sessions.lock().unwrap();
+        if let Some(s) = sessions.get_mut(session_id) {
+            s.last_active_at = Instant::now();
+            true
         } else {
             false
         }
@@ -112,14 +113,19 @@ impl SessionStore {
 
     /// Mark session as initialized
     pub fn mark_initialized(&self, session_id: &str) -> bool {
-        if let Some(session) = self.get_session(session_id) {
-            let mut sessions = self.sessions.lock().unwrap();
-            if let Some(s) = sessions.get_mut(session_id) {
-                s.initialized = true;
-                true
-            } else {
-                false
+        {
+            // First check if session exists without holding the lock
+            let sessions = self.sessions.lock().unwrap();
+            if !sessions.contains_key(session_id) {
+                return false;
             }
+        } // Drop the lock here
+        
+        // Now acquire lock again for the update
+        let mut sessions = self.sessions.lock().unwrap();
+        if let Some(s) = sessions.get_mut(session_id) {
+            s.initialized = true;
+            true
         } else {
             false
         }
@@ -139,7 +145,7 @@ impl SessionStore {
         // Collect expired session IDs
         let expired_sessions: Vec<String> = sessions
             .iter()
-            .filter(|(_, session)| now.duration_since(session.last_active_at) > Duration::from_secs(3600))
+            .filter(|(_, session)| now.duration_since(session.last_active_at) > self.session_ttl)
             .map(|(id, _)| id.clone())
             .collect();
 
@@ -147,6 +153,12 @@ impl SessionStore {
         for session_id in expired_sessions {
             sessions.remove(&session_id);
         }
+    }
+}
+
+impl Default for SessionStore {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -294,7 +294,8 @@ docker-compose -f docker-compose.test.yml up -d
 - `GET /events` - Server-sent events stream
 
 ### JSON-RPC API
-- `POST /mcp` - Main API endpoint for all agent operations
+- `POST /rpc` - **Stable production endpoint** for all agent operations
+- `POST /mcp` - Experimental MCP session protocol (not recommended for production)
 
 #### Key Methods
 - `register_agent` - Register new agent
@@ -325,8 +326,9 @@ cargo test --test integration
 
 ### Test Coverage
 - **44 Unit Tests**: Core logic, crypto, embeddings, domain models
-- **25 Integration Tests**: Full API workflows, database operations, schema validation
-- **100% Test Success**: All 69 tests passing
+- **25 Integration Tests**: Full API workflows, database operations, schema validation  
+- **6 Python Load Tests**: Performance and scalability validation
+- **100% Test Success**: All tests passing using stable RPC endpoints
 
 ## Background Workers
 

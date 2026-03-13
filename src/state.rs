@@ -1,7 +1,6 @@
 use crate::config::Config;
 use crate::db::graph_cache::GraphCache;
 use crate::api::handlers::Metrics;
-use crate::storage::LocalStorage;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -70,6 +69,7 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub metrics: Arc<Metrics>,
     pub storage: Arc<crate::storage::LocalStorage>,
+    pub session_store: Arc<crate::api::mcp_session::SessionStore>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -107,6 +107,7 @@ impl AppState {
             config,
             metrics: Arc::new(Metrics::default()),
             storage,
+            session_store: Arc::new(crate::api::mcp_session::SessionStore::new()),
         })
     }
 }

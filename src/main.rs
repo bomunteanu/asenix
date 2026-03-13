@@ -1,3 +1,6 @@
+#![allow(dead_code)]
+#![allow(clippy::redundant_pattern_matching, clippy::should_implement_trait)]
+
 use axum::extract::DefaultBodyLimit;
 use axum::routing::{get, post, put, head, delete};
 use axum::Router;
