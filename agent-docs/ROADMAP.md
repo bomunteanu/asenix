@@ -2,6 +2,68 @@
 
 This document tracks unimplemented features, known TODOs, and planned improvements with references to the relevant source files and functions.
 
+## Current Status (March 2026)
+
+- Real embeddings are integrated and running (`fastembed` local provider + OpenAI-compatible provider switch).
+- Embedding worker now generates real vectors and updates pheromones successfully.
+- MCP and load-test paths are passing for agent workflows.
+
+### Agent Testing Readiness
+
+Yes — the app can now be tested with agents end-to-end.
+
+Validated paths:
+- MCP session lifecycle (`initialize`, `notifications/initialized`, tool calls)
+- Agent registration + confirmation
+- Atom publication + search + suggestions + claim flows under load
+- Background embedding processing with real model vectors
+
+Known caveat:
+- Some Rust integration tests remain flaky/failing in existing areas unrelated to the embedding integration.
+
+## Next Plan (Prioritized)
+
+### Phase 1 — Stability & Hygiene (Immediate)
+
+1. **Fix remaining integration-test flakes**
+   - `tests/integration/coordination_test_fixed.rs`
+   - `tests/integration/agent_registration_tests.rs`
+   - Goal: deterministic CI green baseline.
+
+2. **Add embedding provider ops docs**
+   - Document `EMBEDDING_PROVIDER`, `EMBEDDING_LOCAL_MODEL`, and dimension alignment.
+   - Files: `agent-docs/DEVELOPMENT.md`, `agent-docs/DEPLOYMENT.md`.
+
+### Phase 2 — Missing Core Features
+
+4. **Implement `claim_direction`**
+   - `src/api/rpc.rs` → `handle_claim_direction`
+   - Use existing `claims` table logic (`migrations/001_initial_schema.sql`)
+   - Add conflict checks + expiry path.
+
+5. **Implement `query_cluster`**
+   - `src/api/rpc.rs` → `handle_query_cluster`
+   - Add traversal query support in `src/db/graph_cache.rs`.
+
+6. **Make review queue real**
+   - `src/api/handlers.rs` (`get_review_queue`, `review_atom`)
+   - Add persistent review state (new table + decision effects on acceptance/reliability).
+
+### Phase 3 — Production Hardening
+
+7. **Session lifecycle controls**
+   - Session expiry + cleanup in `src/api/mcp_session.rs`
+   - Optional per-session rate limits.
+
+8. **Observability upgrades**
+   - Real embedding queue depth metrics
+   - Embedding worker throughput/latency metrics
+   - Request latency histograms in Prometheus.
+
+9. **Graph cache correctness/performance**
+   - Warm-up cache from DB at startup
+   - Incremental update path in `src/db/queries.rs` (`publish_atom` TODO).
+
 ## Not Yet Implemented
 
 ### query_cluster

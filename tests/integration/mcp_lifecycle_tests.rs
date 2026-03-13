@@ -93,7 +93,7 @@ async fn test_mcp_initialize_lifecycle() {
     let response_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     
     let tools = response_json.get("result").unwrap().get("tools").unwrap().as_array().unwrap();
-    assert_eq!(tools.len(), 9); // Should have all 9 tools
+    assert_eq!(tools.len(), 10); // register_agent_simple + 9 original tools
 }
 
 #[tokio::test]
@@ -127,7 +127,7 @@ async fn test_mcp_session_validation() {
     let response = app.clone().oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
     
-    // Test missing Accept header → 400 Bad Request
+    // Test missing Accept header → now allowed (non-browser MCP clients often omit it)
     let request = Request::builder()
         .method(Method::POST)
         .uri("/mcp")
@@ -135,9 +135,9 @@ async fn test_mcp_session_validation() {
         .header("content-type", "application/json")
         .body(Body::from(init_request.to_string()))
         .unwrap();
-    
+
     let response = app.clone().oneshot(request).await.unwrap();
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(response.status(), StatusCode::OK);
     
     // Test no Origin (optional per MCP spec) → should proceed normally
     let request = Request::builder()

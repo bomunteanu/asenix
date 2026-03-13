@@ -95,6 +95,61 @@ pub struct AgentRegistrationResponse {
     pub challenge: String,
 }
 
+#[derive(Debug)]
+pub struct SimpleRegistrationResponse {
+    pub agent_id: String,
+    pub api_token: String,
+}
+
+/// Register an agent without requiring a client-side keypair.
+/// Generates an Ed25519 keypair server-side (private key discarded),
+/// derives agent_id from the public key, and issues a random API token
+/// that can be used in place of per-request Ed25519 signatures.
+pub async fn register_agent_simple(pool: &PgPool) -> Result<SimpleRegistrationResponse> {
+    use rand::RngCore;
+
+    let (_private_key, public_key) = crate::crypto::signing::generate_keypair();
+    let agent_id = compute_agent_id(&public_key);
+
+    let mut token_bytes = [0u8; 32];
+    rand::rng().fill_bytes(&mut token_bytes);
+    let api_token = format!("mote_{}", hex::encode(&token_bytes));
+
+    sqlx::query(
+        "INSERT INTO agents (agent_id, public_key, confirmed, api_token) VALUES ($1, $2, true, $3)",
+    )
+    .bind(&agent_id)
+    .bind(&public_key)
+    .bind(&api_token)
+    .execute(pool)
+    .await?;
+
+    Ok(SimpleRegistrationResponse { agent_id, api_token })
+}
+
+/// Look up a confirmed agent by their API token.
+pub async fn get_agent_by_token(pool: &PgPool, api_token: &str) -> Result<Option<Agent>> {
+    let row = sqlx::query(
+        "SELECT * FROM agents WHERE api_token = $1 AND confirmed = true",
+    )
+    .bind(api_token)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row.map(|row| Agent {
+        agent_id: row.get("agent_id"),
+        public_key: row.get("public_key"),
+        confirmed: row.get("confirmed"),
+        challenge: row.get("challenge"),
+        reliability: row.get("reliability"),
+        replication_rate: row.get("replication_rate"),
+        retraction_rate: row.get("retraction_rate"),
+        contradiction_rate: row.get("contradiction_rate"),
+        atoms_published: row.get("atoms_published"),
+        created_at: row.get("created_at"),
+    }))
+}
+
 // Phase 3: Core Graph Operations
 
 pub async fn publish_atom(
@@ -186,6 +241,7 @@ pub async fn search_atoms(
     domain_filter: Option<&str>,
     type_filter: Option<&str>,
     lifecycle_filter: Option<&str>,
+    text_search: Option<&str>,
     limit: i64,
     offset: i64,
 ) -> Result<Vec<Atom>> {
@@ -207,6 +263,11 @@ pub async fn search_atoms(
         query.push_str(&format!(" AND lifecycle = ${}", bind_count));
     }
 
+    if let Some(_text) = text_search {
+        bind_count += 1;
+        query.push_str(&format!(" AND statement ILIKE ${}", bind_count));
+    }
+
     query.push_str(" ORDER BY created_at DESC");
     query.push_str(&format!(" LIMIT {} OFFSET {}", limit, offset));
 
@@ -220,6 +281,9 @@ pub async fn search_atoms(
     }
     if let Some(lifecycle) = lifecycle_filter {
         query_builder = query_builder.bind(lifecycle);
+    }
+    if let Some(text) = text_search {
+        query_builder = query_builder.bind(format!("%{}%", text));
     }
 
     let rows = query_builder.fetch_all(pool).await?;

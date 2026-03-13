@@ -33,3 +33,14 @@ pub fn hex_to_bytes(hex: &str) -> Result<Vec<u8>> {
 pub fn bytes_to_hex(bytes: &[u8]) -> String {
     hex::encode(bytes)
 }
+
+/// Generate a fresh Ed25519 keypair. Returns (private_key_bytes, public_key_bytes).
+pub fn generate_keypair() -> (Vec<u8>, Vec<u8>) {
+    use rand::RngCore;
+    let mut secret_bytes = [0u8; 32];
+    rand::rng().fill_bytes(&mut secret_bytes);
+    let signing_key = ed25519_dalek::SigningKey::from_bytes(&secret_bytes);
+    let public_key = signing_key.verifying_key().to_bytes().to_vec();
+    let private_key = signing_key.to_bytes().to_vec();
+    (private_key, public_key)
+}

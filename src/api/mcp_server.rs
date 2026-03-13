@@ -147,24 +147,29 @@ fn validate_origin(headers: &HeaderMap, allowed_origins: &[&str]) -> std::result
 }
 
 fn validate_post_accept_header(headers: &HeaderMap) -> std::result::Result<(), (StatusCode, String)> {
-    let accept_header = headers
-        .get("accept")
-        .ok_or_else(|| (StatusCode::BAD_REQUEST, "Missing Accept header".to_string()))?;
+    // Accept header is optional for non-browser MCP clients (e.g. supergateway, SDK proxies).
+    let Some(accept_header) = headers.get("accept") else {
+        return Ok(());
+    };
 
     let accept = accept_header
         .to_str()
         .map_err(|_| (StatusCode::BAD_REQUEST, "Invalid Accept header".to_string()))?;
 
-    let media_types = parse_accept_header(accept);
-    let has_json = has_accept_media_type(&media_types, "application/json");
-    let has_sse = has_accept_media_type(&media_types, "text/event-stream");
+    // Wildcard always accepted.
+    if accept.contains("*/*") {
+        return Ok(());
+    }
 
-    if has_json && has_sse {
+    let media_types = parse_accept_header(accept);
+    if has_accept_media_type(&media_types, "application/json")
+        || has_accept_media_type(&media_types, "text/event-stream")
+    {
         Ok(())
     } else {
         Err((
             StatusCode::BAD_REQUEST,
-            "Accept header must include both application/json and text/event-stream".to_string(),
+            "Accept header must include application/json or text/event-stream".to_string(),
         ))
     }
 }
@@ -404,14 +409,12 @@ async fn handle_notifications_initialized(session_store: &SessionStore, headers:
         .and_then(|id| id.to_str().ok())
         .ok_or_else(|| MoteError::Validation("Missing MCP-Session-Id header".to_string()))?;
 
-    let session = session_store
+    session_store
         .get_session(session_id)
         .ok_or_else(|| MoteError::NotFound("Session not found".to_string()))?;
 
-    if session.initialized {
-        return Err(MoteError::Validation("Session already initialized".to_string()));
-    }
-
+    // Idempotent: mark initialized regardless of current state.
+    // Some clients retry this notification on reconnect.
     session_store.mark_initialized(session_id);
     Ok(Value::Null)
 }

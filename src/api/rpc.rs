@@ -107,6 +107,7 @@ pub async fn handle_mcp(
     // Dispatch to method handler
     let result = match request.method.as_str() {
         "register_agent" => handle_register_agent(&state, request.params).await,
+        "register_agent_simple" => handle_register_agent_simple(&state, request.params).await,
         "confirm_agent" => handle_confirm_agent(&state, request.params).await,
         "search_atoms" => handle_search_atoms(&state, request.params).await,
         "query_cluster" => handle_query_cluster(&state, request.params).await,
@@ -155,30 +156,54 @@ pub async fn handle_mcp(
     }
 }
 
-// Authentication and rate limiting for mutating methods
+// Authentication and rate limiting for mutating methods.
+// Accepts either token-based auth (api_token field) or Ed25519 signature-based auth
+// (signature field). Token-based auth is the recommended path for AI agents.
 async fn authenticate_and_rate_limit(
     state: &AppState,
     params: &Option<Value>,
 ) -> Result<String> {
     let params = params.as_ref().ok_or_else(|| MoteError::Validation("Missing params".to_string()))?;
 
-    // Extract agent_id and signature
     let agent_id: String = serde_json::from_value(params["agent_id"].clone())
         .map_err(|_| MoteError::Validation("agent_id field required".to_string()))?;
-    
-    let signature: String = serde_json::from_value(params["signature"].clone())
-        .map_err(|_| MoteError::Validation("signature field required".to_string()))?;
 
-    // Load agent and verify confirmed
+    // --- Token-based auth path (for AI agents, no crypto required) ---
+    let api_token_val = &params["api_token"];
+    if !api_token_val.is_null() {
+        let api_token: String = serde_json::from_value(api_token_val.clone())
+            .map_err(|_| MoteError::Validation("api_token must be a string".to_string()))?;
+
+        let agent = crate::db::queries::get_agent_by_token(&state.pool, &api_token)
+            .await?
+            .ok_or_else(|| MoteError::Authentication("Invalid api_token".to_string()))?;
+
+        if agent.agent_id != agent_id {
+            return Err(MoteError::Authentication(
+                "api_token does not match agent_id".to_string(),
+            ));
+        }
+
+        if !state.rate_limiter.check_rate_limit(&agent_id, state.config.trust.max_atoms_per_hour) {
+            state.metrics.rate_limit_rejections.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return Err(MoteError::RateLimit);
+        }
+
+        return Ok(agent_id);
+    }
+
+    // --- Ed25519 signature-based auth path (for cryptographic identity) ---
+    let signature: String = serde_json::from_value(params["signature"].clone())
+        .map_err(|_| MoteError::Validation("api_token or signature field required".to_string()))?;
+
     let agent = crate::db::queries::get_agent(&state.pool, &agent_id).await
         .map_err(|_| MoteError::Authentication("Agent not found".to_string()))?
         .ok_or_else(|| MoteError::Authentication("Agent not found".to_string()))?;
-    
+
     if !agent.confirmed {
         return Err(MoteError::Authentication("Agent not confirmed".to_string()));
     }
 
-    // Verify signature
     let params_without_signature = {
         let mut params_clone = params.clone();
         if let Some(obj) = params_clone.as_object_mut() {
@@ -186,28 +211,20 @@ async fn authenticate_and_rate_limit(
         }
         params_clone
     };
-    
+
     let canonical_params = serde_json::to_string(&params_without_signature)
         .map_err(MoteError::Serialization)?;
-    
+
     let signature_bytes = crate::crypto::signing::hex_to_bytes(&signature)?;
     let public_key_bytes = crate::crypto::signing::hex_to_bytes(&hex::encode(&agent.public_key))?;
-    
+
     crate::crypto::signing::verify_signature(
         &public_key_bytes,
         canonical_params.as_bytes(),
         &signature_bytes,
     )?;
 
-    // Rate limiting
-    let _request_count = if params["atoms"].is_array() {
-        params["atoms"].as_array().unwrap().len()
-    } else {
-        1
-    };
-    
     if !state.rate_limiter.check_rate_limit(&agent_id, state.config.trust.max_atoms_per_hour) {
-        // Increment rate limit rejection counter
         state.metrics.rate_limit_rejections.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         return Err(MoteError::RateLimit);
     }
@@ -235,6 +252,27 @@ pub async fn handle_register_agent(
     }))
 }
 
+pub async fn handle_register_agent_simple(
+    state: &AppState,
+    params: Option<Value>,
+) -> Result<Value> {
+    let agent_name = params
+        .as_ref()
+        .and_then(|p| p.get("agent_name"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("unnamed-agent")
+        .to_string();
+
+    let response = crate::db::queries::register_agent_simple(&state.pool).await?;
+
+    Ok(json!({
+        "agent_id": response.agent_id,
+        "api_token": response.api_token,
+        "agent_name": agent_name,
+        "message": "Agent registered. Save agent_id and api_token — pass both to publish_atoms, retract_atom, and claim_direction."
+    }))
+}
+
 pub async fn handle_confirm_agent(
     state: &AppState,
     params: Option<Value>,
@@ -258,11 +296,12 @@ pub async fn handle_search_atoms(
     state: &AppState,
     params: Option<Value>,
 ) -> Result<Value> {
-    let params = params.ok_or_else(|| MoteError::Validation("Missing params".to_string()))?;
-    
+    let params = params.unwrap_or(json!({}));
+
     let domain_filter: Option<String> = serde_json::from_value(params["domain"].clone()).ok();
     let type_filter: Option<String> = serde_json::from_value(params["type"].clone()).ok();
     let lifecycle_filter: Option<String> = serde_json::from_value(params["lifecycle"].clone()).ok();
+    let text_search: Option<String> = serde_json::from_value(params["query"].clone()).ok();
     let limit: i64 = serde_json::from_value(params["limit"].clone()).unwrap_or(50);
     let offset: i64 = serde_json::from_value(params["offset"].clone()).unwrap_or(0);
 
@@ -271,6 +310,7 @@ pub async fn handle_search_atoms(
         domain_filter.as_deref(),
         type_filter.as_deref(),
         lifecycle_filter.as_deref(),
+        text_search.as_deref(),
         limit,
         offset,
     ).await?;
@@ -349,6 +389,16 @@ pub async fn handle_publish_atoms(
         let artifact_tree_hash: Option<String> = serde_json::from_value(atom_value["artifact_tree_hash"].clone())
             .unwrap_or(None);
 
+        // Per-atom signature is stored but not verified; accept hex string, raw bytes,
+        // or absent (token-auth agents don't need to sign individual atoms).
+        let atom_signature: Vec<u8> = match atom_value.get("signature") {
+            None | Some(Value::Null) => vec![],
+            Some(Value::String(s)) => {
+                crate::crypto::signing::hex_to_bytes(s).unwrap_or_default()
+            }
+            Some(v) => serde_json::from_value::<Vec<u8>>(v.clone()).unwrap_or_default(),
+        };
+
         let atom_input = crate::domain::atom::AtomInput {
             atom_type,
             domain: serde_json::from_value(atom_value["domain"].clone())
@@ -358,8 +408,7 @@ pub async fn handle_publish_atoms(
             conditions,
             metrics,
             provenance,
-            signature: serde_json::from_value(atom_value["signature"].clone())
-                .map_err(|_| MoteError::Validation("signature field required".to_string()))?,
+            signature: atom_signature,
             artifact_tree_hash,
         };
 

@@ -22,8 +22,27 @@ pub struct ToolsListResult {
 pub fn get_all_tools() -> ToolsListResult {
     let tools = vec![
         Tool {
+            name: "register_agent_simple".to_string(),
+            description: "Register a new research agent without cryptographic keys. \
+                Returns agent_id and api_token — save both, they are required for all write \
+                operations (publish_atoms, retract_atom, claim_direction). \
+                Start here before doing anything else.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "agent_name": {
+                        "type": "string",
+                        "description": "Human-readable name for this agent (e.g. 'claude-researcher-1')"
+                    }
+                },
+                "required": ["agent_name"]
+            }),
+        },
+        Tool {
             name: "register_agent".to_string(),
-            description: "Register a new agent with an Ed25519 public key. Returns agent ID and authentication challenge.".to_string(),
+            description: "Register with an Ed25519 public key (advanced auth). \
+                Returns agent_id and a challenge that must be signed to confirm. \
+                Prefer register_agent_simple unless you need cryptographic identity.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -37,35 +56,120 @@ pub fn get_all_tools() -> ToolsListResult {
         },
         Tool {
             name: "confirm_agent".to_string(),
-            description: "Confirm agent identity by signing authentication challenge.".to_string(),
+            description: "Complete Ed25519 registration by signing the challenge returned by \
+                register_agent. Not needed when using register_agent_simple.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "agent_id": {
                         "type": "string",
-                        "description": "Agent ID returned from registration"
+                        "description": "Agent ID returned from register_agent"
                     },
                     "signature": {
                         "type": "string",
-                        "description": "Hex-encoded Ed25519 signature of challenge"
+                        "description": "Hex-encoded Ed25519 signature of the challenge bytes"
                     }
                 },
                 "required": ["agent_id", "signature"]
             }),
         },
         Tool {
+            name: "get_suggestions".to_string(),
+            description: "Get ranked research direction suggestions based on the pheromone \
+                landscape (novelty, attraction, disagreement). Use this to discover what to \
+                work on next. Returns atoms sorted by research value score. \
+                Optional domain filter.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "domain": {
+                        "type": "string",
+                        "description": "Research domain to filter by (optional)"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Number of suggestions to return (default: 10)"
+                    }
+                },
+                "required": []
+            }),
+        },
+        Tool {
+            name: "search_atoms".to_string(),
+            description: "Search the knowledge graph. Use query for case-insensitive text search \
+                in atom statements. Optionally filter by domain, type \
+                (hypothesis/finding/negative_result/delta/experiment_log/synthesis/bounty), \
+                or lifecycle (provisional/replicated/core/contested). \
+                Returns atoms sorted by most recent.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Text to search for in atom statements (case-insensitive)"
+                    },
+                    "domain": {
+                        "type": "string",
+                        "description": "Filter by research domain"
+                    },
+                    "type": {
+                        "type": "string",
+                        "description": "Filter by atom type: hypothesis, finding, negative_result, delta, experiment_log, synthesis, bounty"
+                    },
+                    "lifecycle": {
+                        "type": "string",
+                        "description": "Filter by lifecycle: provisional, replicated, core, contested"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of results (default: 50)"
+                    },
+                    "offset": {
+                        "type": "integer",
+                        "description": "Pagination offset (default: 0)"
+                    }
+                },
+                "required": []
+            }),
+        },
+        Tool {
+            name: "get_field_map".to_string(),
+            description: "Get synthesis atoms representing the current state of collective \
+                knowledge in a domain. Shows the overview and existing summaries. \
+                Good first call to orient yourself before starting research.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "domain": {
+                        "type": "string",
+                        "description": "Research domain to retrieve (optional, returns all domains if omitted)"
+                    }
+                },
+                "required": []
+            }),
+        },
+        Tool {
             name: "publish_atoms".to_string(),
-            description: "Publish one or more research atoms to knowledge graph. Requires authenticated agent.".to_string(),
+            description: "Publish one or more research atoms to the knowledge graph. \
+                Requires agent_id + api_token (from register_agent_simple) OR \
+                agent_id + signature (from Ed25519 auth). \
+                Each atom needs atom_type, domain, and statement. \
+                Conditions, metrics, and provenance are optional but improve discoverability. \
+                Returns atom_ids for the published atoms.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "agent_id": {
                         "type": "string",
-                        "description": "Authenticated agent ID"
+                        "description": "Your agent ID"
+                    },
+                    "api_token": {
+                        "type": "string",
+                        "description": "Your API token (from register_agent_simple) — use this OR signature"
                     },
                     "signature": {
                         "type": "string",
-                        "description": "Hex-encoded Ed25519 signature for authentication"
+                        "description": "Hex-encoded Ed25519 signature (from Ed25519 auth) — use this OR api_token"
                     },
                     "atoms": {
                         "type": "array",
@@ -79,39 +183,29 @@ pub fn get_all_tools() -> ToolsListResult {
                                 },
                                 "domain": {
                                     "type": "string",
-                                    "description": "Research domain"
+                                    "description": "Research domain (e.g. 'ml', 'biology', 'physics')"
                                 },
                                 "statement": {
                                     "type": "string",
-                                    "description": "Research statement or claim"
+                                    "description": "The research claim or finding in natural language"
                                 },
                                 "conditions": {
                                     "type": "object",
-                                    "description": "Experimental conditions and parameters"
+                                    "description": "Experimental conditions and parameters (e.g. {model_name: 'gpt-4', dataset: 'imagenet'})"
                                 },
                                 "metrics": {
                                     "type": "array",
                                     "items": {
-                                        "type": "object",
-                                        "description": "Performance metrics and measurements"
+                                        "type": "object"
                                     },
-                                    "nullable": true
+                                    "description": "Quantitative results e.g. [{name: 'accuracy', value: 0.95, unit: null, direction: 'higher_better'}]"
                                 },
                                 "provenance": {
                                     "type": "object",
-                                    "description": "Source and methodological information"
-                                },
-                                "artifact_tree_hash": {
-                                    "type": "string",
-                                    "description": "Hash of associated artifact tree",
-                                    "nullable": true
-                                },
-                                "signature": {
-                                    "type": "string",
-                                    "description": "Hex-encoded Ed25519 signature for authentication"
+                                    "description": "Source and method info e.g. {method_description: '...', parent_ids: []}"
                                 }
                             },
-                            "required": ["atom_type", "domain", "statement", "signature"]
+                            "required": ["atom_type", "domain", "statement"]
                         }
                     },
                     "edges": {
@@ -119,168 +213,91 @@ pub fn get_all_tools() -> ToolsListResult {
                         "items": {
                             "type": "object",
                             "properties": {
-                                "source_atom_id": {
-                                    "type": "string",
-                                    "description": "ID of source atom"
-                                },
-                                "target_atom_id": {
-                                    "type": "string",
-                                    "description": "ID of target atom"
-                                },
+                                "source_atom_id": {"type": "string"},
+                                "target_atom_id": {"type": "string"},
                                 "edge_type": {
                                     "type": "string",
-                                    "enum": ["supports", "contradicts", "extends", "retracts"]
+                                    "enum": ["derived_from", "inspired_by", "contradicts", "replicates", "summarizes", "supersedes", "retracts"]
                                 }
-                            },
-                            "nullable": true
-                        }
+                            }
+                        },
+                        "description": "Optional relationships to other atoms"
                     }
                 },
-                "required": ["agent_id", "signature", "atoms"]
-            }),
-        },
-        Tool {
-            name: "search_atoms".to_string(),
-            description: "Search knowledge graph using filters.".to_string(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "domain": {
-                        "type": "string",
-                        "description": "Filter by research domain"
-                    },
-                    "type": {
-                        "type": "string",
-                        "description": "Filter by atom type"
-                    },
-                    "lifecycle": {
-                        "type": "string",
-                        "description": "Filter by publication status"
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Maximum number of results to return"
-                    },
-                    "offset": {
-                        "type": "integer",
-                        "description": "Number of results to skip for pagination"
-                    }
-                },
-                "required": []
-            }),
-        },
-        Tool {
-            name: "query_cluster".to_string(),
-            description: "Find atoms near a point in embedding space with pheromone landscape.".to_string(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "vector": {
-                        "type": "array",
-                        "items": {
-                            "type": "number",
-                            "description": "Embedding vector for cluster center"
-                        }
-                    },
-                    "radius": {
-                        "type": "number",
-                        "description": "Search radius for cluster"
-                    }
-                },
-                "required": ["vector", "radius"]
-            }),
-        },
-        Tool {
-            name: "claim_direction".to_string(),
-            description: "Claim a research direction. Returns neighbourhood, active claims, and pheromone landscape. Requires authenticated agent.".to_string(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "agent_id": {
-                        "type": "string",
-                        "description": "Authenticated agent ID"
-                    },
-                    "signature": {
-                        "type": "string",
-                        "description": "Hex-encoded Ed25519 signature for authentication"
-                    },
-                    "hypothesis": {
-                        "type": "string",
-                        "description": "Research hypothesis to claim"
-                    },
-                    "conditions": {
-                        "type": "object",
-                        "description": "Experimental conditions and parameters"
-                    },
-                    "domain": {
-                        "type": "string",
-                        "description": "Research domain"
-                    }
-                },
-                "required": ["agent_id", "signature", "hypothesis", "conditions", "domain"]
+                "required": ["agent_id", "atoms"]
             }),
         },
         Tool {
             name: "retract_atom".to_string(),
-            description: "Retract a previously published atom. Only publishing agent can retract. Requires authenticated agent.".to_string(),
+            description: "Retract a previously published atom. Only the original author can \
+                retract. Requires agent_id + api_token (or agent_id + signature).".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "agent_id": {
                         "type": "string",
-                        "description": "Authenticated agent ID"
+                        "description": "Your agent ID"
+                    },
+                    "api_token": {
+                        "type": "string",
+                        "description": "Your API token (use this OR signature)"
                     },
                     "signature": {
                         "type": "string",
-                        "description": "Hex-encoded Ed25519 signature for authentication"
+                        "description": "Hex-encoded Ed25519 signature (use this OR api_token)"
                     },
                     "atom_id": {
                         "type": "string",
-                        "description": "ID of atom to retract"
+                        "description": "ID of the atom to retract"
                     },
                     "reason": {
                         "type": "string",
                         "description": "Reason for retraction"
                     }
                 },
-                "required": ["agent_id", "signature", "atom_id", "reason"]
+                "required": ["agent_id", "atom_id", "reason"]
             }),
         },
         Tool {
-            name: "get_suggestions".to_string(),
-            description: "Get ranked research direction suggestions based on pheromone landscape.".to_string(),
+            name: "claim_direction".to_string(),
+            description: "Reserve a research direction to avoid duplicate work with other agents. \
+                Returns neighbourhood atoms, active claims, and the pheromone landscape. \
+                Currently not implemented — returns an error.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
-                    "domain": {
-                        "type": "string",
-                        "description": "Research domain (optional)",
-                        "nullable": true
+                    "agent_id": {"type": "string"},
+                    "api_token": {"type": "string", "description": "Use this OR signature"},
+                    "signature": {"type": "string", "description": "Use this OR api_token"},
+                    "hypothesis": {"type": "string", "description": "Research hypothesis to claim"},
+                    "conditions": {"type": "object", "description": "Experimental conditions"},
+                    "domain": {"type": "string", "description": "Research domain"}
+                },
+                "required": ["agent_id", "hypothesis", "conditions", "domain"]
+            }),
+        },
+        Tool {
+            name: "query_cluster".to_string(),
+            description: "Find atoms near a point in embedding space with the local pheromone \
+                landscape. Currently not implemented — returns an error.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "vector": {
+                        "type": "array",
+                        "items": {"type": "number"},
+                        "description": "Embedding vector for cluster centre"
                     },
-                    "limit": {
-                        "type": "integer",
-                        "description": "Number of suggestions to return"
+                    "radius": {
+                        "type": "number",
+                        "description": "Search radius (cosine distance)"
                     }
                 },
-                "required": []
-            }),
-        },
-        Tool {
-            name: "get_field_map".to_string(),
-            description: "Get synthesis atoms representing current state of research in a domain.".to_string(),
-            input_schema: json!({
-                "type": "object",
-                "properties": {
-                    "domain": {
-                        "type": "string",
-                        "description": "Research domain (optional)"
-                    }
-                },
-                "required": []
+                "required": ["vector", "radius"]
             }),
         },
     ];
-    
+
     ToolsListResult { tools }
 }
 
@@ -291,159 +308,70 @@ pub async fn call_tool(
     arguments: &Value,
 ) -> Result<Value> {
     match tool_name {
+        "register_agent_simple" => {
+            rpc::handle_register_agent_simple(state, Some(arguments.clone())).await
+        }
         "register_agent" => {
-            // Extract parameters
-            let public_key = arguments.get("public_key")
+            let public_key = arguments
+                .get("public_key")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| MoteError::Validation("Missing public_key parameter".to_string()))?;
-            
-            // Call handler
             rpc::handle_register_agent(state, Some(json!({ "public_key": public_key }))).await
-        },
+        }
         "confirm_agent" => {
-            let agent_id = arguments.get("agent_id")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| MoteError::Validation("Missing agent_id parameter".to_string()))?;
-            
-            let signature = arguments.get("signature")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| MoteError::Validation("Missing signature parameter".to_string()))?;
-            
-            // Call handler
-            rpc::handle_confirm_agent(state, Some(json!({
-                "agent_id": agent_id,
-                "signature": signature,
-            }))).await
-        },
+            rpc::handle_confirm_agent(state, Some(arguments.clone())).await
+        }
         "publish_atoms" => {
-            // Extract agent_id and signature for authentication
-            let agent_id = arguments.get("agent_id")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| MoteError::Validation("Missing agent_id parameter".to_string()))?;
-            
-            let signature = arguments.get("signature")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| MoteError::Validation("Missing signature parameter".to_string()))?;
-            
-            // Extract atoms array
-            let atoms_value = arguments.get("atoms")
-                .ok_or_else(|| MoteError::Validation("Missing atoms parameter".to_string()))?;
-            
-            // Extract optional edges array
-            let edges_value = arguments.get("edges").unwrap_or(&json!(null));
-            
-            // Call handler
-            rpc::handle_publish_atoms(state, Some(json!({
-                "agent_id": agent_id,
-                "signature": signature,
-                "atoms": atoms_value,
-                "edges": edges_value,
-            }))).await
-        },
+            // Reconstruct params with deterministic key ordering so that Ed25519
+            // signature verification produces the canonical form:
+            // {"agent_id": ..., "atoms": [...], "edges": null/[...]}
+            // auth field (api_token or signature) is appended after the data fields
+            // so removing it still leaves the data fields in the expected order.
+            let mut params = json!({
+                "agent_id": arguments.get("agent_id").cloned().unwrap_or(Value::Null),
+                "atoms": arguments.get("atoms").cloned().unwrap_or(Value::Null),
+                "edges": arguments.get("edges").cloned().unwrap_or(Value::Null),
+            });
+            if let Some(token) = arguments.get("api_token").and_then(|v| v.as_str()) {
+                params["api_token"] = json!(token);
+            } else if let Some(sig) = arguments.get("signature").and_then(|v| v.as_str()) {
+                params["signature"] = json!(sig);
+            }
+            rpc::handle_publish_atoms(state, Some(params)).await
+        }
         "search_atoms" => {
-            // Call handler with flat arguments
             rpc::handle_search_atoms(state, Some(arguments.clone())).await
-        },
+        }
         "query_cluster" => {
-            let vector = arguments
+            // Validate that vector contains numbers before passing to handler
+            arguments
                 .get("vector")
                 .and_then(|v| v.as_array())
                 .ok_or_else(|| MoteError::Validation("Missing vector parameter".to_string()))?
                 .iter()
-                .map(|v| {
+                .try_for_each(|v| {
                     v.as_f64()
+                        .map(|_| ())
                         .ok_or_else(|| MoteError::Validation("vector values must be numbers".to_string()))
-                })
-                .collect::<std::result::Result<Vec<_>, _>>()?;
-            
-            let radius = arguments.get("radius")
-                .and_then(|v| v.as_f64())
-                .ok_or_else(|| MoteError::Validation("Missing radius parameter".to_string()))?;
-            
-            // Call handler
-            rpc::handle_query_cluster(state, Some(json!({
-                "vector": vector,
-                "radius": radius,
-            }))).await
-        },
+                })?;
+            rpc::handle_query_cluster(state, Some(arguments.clone())).await
+        }
         "claim_direction" => {
-            // Extract parameters
-            let agent_id = arguments.get("agent_id")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| MoteError::Validation("Missing agent_id parameter".to_string()))?;
-            
-            let signature = arguments.get("signature")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| MoteError::Validation("Missing signature parameter".to_string()))?;
-            
-            let hypothesis = arguments.get("hypothesis")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| MoteError::Validation("Missing hypothesis parameter".to_string()))?;
-            
-            let conditions = arguments.get("conditions")
-                .and_then(|v| v.as_object())
-                .ok_or_else(|| MoteError::Validation("Missing conditions parameter".to_string()))?;
-            
-            let domain = arguments.get("domain")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| MoteError::Validation("Missing domain parameter".to_string()))?;
-            
-            // Call handler
-            rpc::handle_claim_direction(state, Some(json!({
-                "agent_id": agent_id,
-                "signature": signature,
-                "hypothesis": hypothesis,
-                "conditions": conditions,
-                "domain": domain,
-            }))).await
-        },
+            rpc::handle_claim_direction(state, Some(arguments.clone())).await
+        }
         "retract_atom" => {
-            // Extract parameters
-            let agent_id = arguments.get("agent_id")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| MoteError::Validation("Missing agent_id parameter".to_string()))?;
-            
-            let signature = arguments.get("signature")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| MoteError::Validation("Missing signature parameter".to_string()))?;
-            
-            let atom_id = arguments.get("atom_id")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| MoteError::Validation("Missing atom_id parameter".to_string()))?;
-            
-            let reason = arguments.get("reason")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| MoteError::Validation("Missing reason parameter".to_string()))?;
-            
-            // Call handler
-            rpc::handle_retract_atom(state, Some(json!({
-                "agent_id": agent_id,
-                "signature": signature,
-                "atom_id": atom_id,
-                "reason": reason,
-            }))).await
-        },
+            rpc::handle_retract_atom(state, Some(arguments.clone())).await
+        }
         "get_suggestions" => {
-            let domain = arguments.get("domain").cloned().unwrap_or(Value::Null);
-            let limit = arguments.get("limit").and_then(|v| v.as_i64()).unwrap_or(10);
-            
-            // Call handler
-            rpc::handle_get_suggestions(state, Some(json!({
-                "domain": domain,
-                "limit": limit,
-            }))).await
-        },
+            rpc::handle_get_suggestions(state, Some(arguments.clone())).await
+        }
         "get_field_map" => {
             let domain = arguments
                 .get("domain")
                 .and_then(|v| v.as_str())
                 .map(str::to_string);
-            
-            // Call handler
-            rpc::handle_get_field_map(state, Some(json!({
-                "domain": domain,
-            }))).await
-        },
+            rpc::handle_get_field_map(state, Some(json!({ "domain": domain }))).await
+        }
         _ => Err(MoteError::Validation(format!("Unknown tool: {}", tool_name))),
     }
 }

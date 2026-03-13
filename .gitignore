@@ -2,6 +2,7 @@
 /target/
 **/*.rs.bk
 Cargo.lock
+.fastembed_cache/
 
 # IDE
 .vscode/

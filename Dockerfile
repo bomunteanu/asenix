@@ -8,6 +8,8 @@ RUN apt-get update && apt-get install -y \
     pkg-config \
     libssl-dev \
     libpq-dev \
+    build-essential \
+    g++ \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Cargo files (but not the lock file)
@@ -37,6 +39,7 @@ FROM rust:1.94-slim
 RUN apt-get update && apt-get install -y \
     libssl3 \
     libpq5 \
+    libstdc++6 \
     ca-certificates \
     curl \
     && rm -rf /var/lib/apt/lists/*
@@ -55,11 +58,13 @@ COPY --from=builder /app/migrations ./migrations
 # Create config directory
 RUN mkdir -p /app/config && chown -R mote:mote /app
 
-# Copy example config
+# Copy example config and rename it
 COPY config.example.toml /app/config/
+RUN mv /app/config/config.example.toml /app/config/config.toml
+RUN sed -i 's/embedding_dimension = 1536/embedding_dimension = 384/' /app/config/config.toml
 
 # Switch to non-root user
-USER mote
+# USER mote
 
 # Expose port
 EXPOSE 3000
