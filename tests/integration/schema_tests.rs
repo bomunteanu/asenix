@@ -1,6 +1,8 @@
 use super::{setup_test_app, test_database_url};
 use sqlx::Row;
+use serial_test::serial;
 
+#[serial]
 #[tokio::test]
 async fn test_dynamic_schema_embedding_column_dimension() {
     let _app = setup_test_app().await;
@@ -25,6 +27,7 @@ async fn test_dynamic_schema_embedding_column_dimension() {
     assert_eq!(row.get::<String, _>("udt_name"), "vector");
 }
 
+#[serial]
 #[tokio::test]
 async fn test_hnsw_index_exists() {
     let _app = setup_test_app().await;
@@ -51,6 +54,7 @@ async fn test_hnsw_index_exists() {
     assert!(!index_name.is_empty(), "Index should have a name");
 }
 
+#[serial]
 #[tokio::test]
 async fn test_pgvector_extension_installed() {
     let _app = setup_test_app().await;
@@ -67,6 +71,7 @@ async fn test_pgvector_extension_installed() {
     assert!(row.is_some(), "pgvector extension should be installed");
 }
 
+#[serial]
 #[tokio::test]
 async fn test_migration_idempotency() {
     // Test that running migrations twice doesn't fail
@@ -91,6 +96,7 @@ async fn test_migration_idempotency() {
     assert_eq!(result.get::<i32, _>("test"), 1);
 }
 
+#[serial]
 #[tokio::test]
 async fn test_all_tables_exist() {
     let _app = setup_test_app().await;
@@ -123,6 +129,7 @@ async fn test_all_tables_exist() {
     }
 }
 
+#[serial]
 #[tokio::test]
 async fn test_foreign_key_constraints_exist() {
     let _app = setup_test_app().await;
@@ -155,6 +162,7 @@ async fn test_foreign_key_constraints_exist() {
     }
 }
 
+#[serial]
 #[tokio::test]
 async fn test_indexes_exist() {
     let _app = setup_test_app().await;
@@ -188,6 +196,7 @@ async fn test_indexes_exist() {
     }
 }
 
+#[serial]
 #[tokio::test]
 async fn test_vector_column_type() {
     let _app = setup_test_app().await;

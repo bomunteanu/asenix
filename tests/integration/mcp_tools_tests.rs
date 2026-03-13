@@ -5,6 +5,7 @@ use axum::body::Body;
 use serde_json::json;
 use super::setup_test_app;
 use tower::ServiceExt;
+use serial_test::serial;
 
 async fn initialize_mcp_session(app: &axum::Router) -> String {
     let init_request = json!({
@@ -58,6 +59,7 @@ async fn initialize_mcp_session(app: &axum::Router) -> String {
     session_id.to_string()
 }
 
+#[serial]
 #[tokio::test]
 async fn test_mcp_tools_list() {
     let app = setup_test_app().await;
@@ -106,6 +108,7 @@ async fn test_mcp_tools_list() {
     assert!(tool_names.contains(&"get_field_map".to_string()));
 }
 
+#[serial]
 #[tokio::test]
 async fn test_mcp_register_agent() {
     let app = setup_test_app().await;
@@ -152,6 +155,7 @@ async fn test_mcp_register_agent() {
     assert!(tool_result.get("challenge").is_some());
 }
 
+#[serial]
 #[tokio::test]
 async fn test_mcp_tool_validation() {
     let app = setup_test_app().await;
@@ -192,6 +196,7 @@ async fn test_mcp_tool_validation() {
     assert!(error_text.contains("Missing public_key parameter"));
 }
 
+#[serial]
 #[tokio::test]
 async fn test_mcp_unknown_tool() {
     let app = setup_test_app().await;
@@ -231,6 +236,7 @@ async fn test_mcp_unknown_tool() {
     assert!(error_text.contains("Unknown tool"));
 }
 
+#[serial]
 #[tokio::test]
 async fn test_mcp_tool_parameter_types() {
     let app = setup_test_app().await;
@@ -272,6 +278,7 @@ async fn test_mcp_tool_parameter_types() {
     // We don't assert on isError here as the tool might fail for other reasons
 }
 
+#[serial]
 #[tokio::test]
 async fn test_mcp_tool_schema_validation() {
     let app = setup_test_app().await;

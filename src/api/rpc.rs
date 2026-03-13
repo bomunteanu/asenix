@@ -319,21 +319,164 @@ pub async fn handle_search_atoms(
 }
 
 pub async fn handle_query_cluster(
-    _state: &AppState,
-    _params: Option<Value>,
+    state: &AppState,
+    params: Option<Value>,
 ) -> Result<Value> {
-    Err(MoteError::Validation("not yet implemented".to_string()))
+    let params = params.ok_or_else(|| MoteError::Validation("Missing params".to_string()))?;
+
+    // Extract and validate vector
+    let vector_value = params.get("vector")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| MoteError::Validation("vector field required (array of numbers)".to_string()))?;
+
+    let vector: Vec<f32> = vector_value.iter()
+        .map(|v| v.as_f64()
+            .ok_or_else(|| MoteError::Validation("vector values must be numbers".to_string()))
+            .map(|f| f as f32))
+        .collect::<Result<_>>()?;
+
+    if vector.is_empty() {
+        return Err(MoteError::Validation("vector must not be empty".to_string()));
+    }
+
+    let radius: f64 = serde_json::from_value(params["radius"].clone())
+        .map_err(|_| MoteError::Validation("radius field required (number)".to_string()))?;
+
+    let limit: i64 = serde_json::from_value(params["limit"].clone()).unwrap_or(20);
+
+    let results = crate::db::queries::query_cluster_atoms(&state.pool, vector, radius, limit).await?;
+
+    let atoms_json: Vec<Value> = results.iter().map(|r| json!({
+        "atom_id":    r.atom.atom_id,
+        "atom_type":  r.atom.atom_type.to_string(),
+        "domain":     r.atom.domain,
+        "statement":  r.atom.statement,
+        "conditions": r.atom.conditions,
+        "metrics":    r.atom.metrics,
+        "distance":   r.distance,
+        "pheromone": {
+            "attraction":   r.atom.ph_attraction,
+            "repulsion":    r.atom.ph_repulsion,
+            "novelty":      r.atom.ph_novelty,
+            "disagreement": r.atom.ph_disagreement,
+        },
+        "lifecycle": r.atom.lifecycle.to_string(),
+    })).collect();
+
+    let pheromone_landscape = if results.is_empty() {
+        json!({"attraction": 0.0, "repulsion": 0.0, "novelty": 1.0, "disagreement": 0.0})
+    } else {
+        let n = results.len() as f64;
+        json!({
+            "attraction":   results.iter().map(|r| r.atom.ph_attraction).sum::<f64>() / n,
+            "repulsion":    results.iter().map(|r| r.atom.ph_repulsion).sum::<f64>() / n,
+            "novelty":      results.iter().map(|r| r.atom.ph_novelty).sum::<f64>() / n,
+            "disagreement": results.iter().map(|r| r.atom.ph_disagreement).sum::<f64>() / n,
+        })
+    };
+
+    Ok(json!({
+        "atoms":              atoms_json,
+        "pheromone_landscape": pheromone_landscape,
+        "total":              results.len(),
+    }))
 }
 
 pub async fn handle_claim_direction(
     state: &AppState,
     params: Option<Value>,
 ) -> Result<Value> {
-    // Auth and rate limiting for mutating methods
-    let _verified_agent_id = authenticate_and_rate_limit(state, &params).await?;
-    
-    // TODO: Implement claim_direction logic
-    Err(MoteError::Validation("not yet implemented".to_string()))
+    let agent_id = authenticate_and_rate_limit(state, &params).await?;
+    let params = params.ok_or_else(|| MoteError::Validation("Missing params".to_string()))?;
+
+    let hypothesis: String = serde_json::from_value(params["hypothesis"].clone())
+        .map_err(|_| MoteError::Validation("hypothesis field required".to_string()))?;
+    let domain: String = serde_json::from_value(params["domain"].clone())
+        .map_err(|_| MoteError::Validation("domain field required".to_string()))?;
+    let conditions = if params["conditions"].is_null() {
+        json!({})
+    } else {
+        params["conditions"].clone()
+    };
+
+    // Expire stale claims before any read/write
+    crate::db::queries::expire_stale_claims(&state.pool).await?;
+
+    // Publish a provisional hypothesis atom for the claimed direction
+    let atom_input = crate::domain::atom::AtomInput {
+        atom_type: crate::domain::atom::AtomType::Hypothesis,
+        domain: domain.clone(),
+        statement: hypothesis.clone(),
+        conditions: conditions.clone(),
+        metrics: None,
+        provenance: json!({}),
+        signature: vec![],
+        artifact_tree_hash: None,
+    };
+    let atom_id = crate::db::queries::publish_atom(&state.pool, &agent_id, atom_input).await?;
+
+    // Update graph cache
+    {
+        let mut cache = state.graph_cache.write().await;
+        cache.add_node(atom_id.clone());
+    }
+
+    // Register the claim
+    let claim_id = uuid::Uuid::new_v4().to_string();
+    let ttl_hours = state.config.workers.claim_ttl_hours as i64;
+    let expires_at = chrono::Utc::now() + chrono::Duration::hours(ttl_hours);
+    crate::db::queries::create_claim(&state.pool, &claim_id, &atom_id, &agent_id, expires_at).await?;
+
+    // Gather neighbourhood atoms (same domain, up to 10)
+    let neighbourhood = crate::db::queries::get_neighbourhood_atoms(&state.pool, &domain, 10).await?;
+
+    // Gather active claims in this domain
+    let active_claims = crate::db::queries::get_active_claims_in_domain(&state.pool, &domain).await?;
+
+    let neighbourhood_json: Vec<Value> = neighbourhood.iter().map(|a| json!({
+        "atom_id":    a.atom_id,
+        "atom_type":  a.atom_type.to_string(),
+        "domain":     a.domain,
+        "statement":  a.statement,
+        "conditions": a.conditions,
+        "pheromone": {
+            "attraction":   a.ph_attraction,
+            "repulsion":    a.ph_repulsion,
+            "novelty":      a.ph_novelty,
+            "disagreement": a.ph_disagreement,
+        }
+    })).collect();
+
+    let active_claims_json: Vec<Value> = active_claims.iter().map(|c| json!({
+        "claim_id":   c.claim_id,
+        "atom_id":    c.atom_id,
+        "agent_id":   c.agent_id,
+        "hypothesis": c.hypothesis,
+        "conditions": c.conditions,
+        "expires_at": c.expires_at.to_rfc3339(),
+    })).collect();
+
+    // Aggregate pheromone landscape for the domain
+    let pheromone_landscape = if neighbourhood.is_empty() {
+        json!({"attraction": 0.0, "repulsion": 0.0, "novelty": 1.0, "disagreement": 0.0})
+    } else {
+        let n = neighbourhood.len() as f64;
+        json!({
+            "attraction":   neighbourhood.iter().map(|a| a.ph_attraction).sum::<f64>() / n,
+            "repulsion":    neighbourhood.iter().map(|a| a.ph_repulsion).sum::<f64>() / n,
+            "novelty":      neighbourhood.iter().map(|a| a.ph_novelty).sum::<f64>() / n,
+            "disagreement": neighbourhood.iter().map(|a| a.ph_disagreement).sum::<f64>() / n,
+        })
+    };
+
+    Ok(json!({
+        "atom_id":             atom_id,
+        "claim_id":            claim_id,
+        "expires_at":          expires_at.to_rfc3339(),
+        "neighbourhood":       neighbourhood_json,
+        "active_claims":       active_claims_json,
+        "pheromone_landscape": pheromone_landscape,
+    }))
 }
 
 pub async fn handle_publish_atoms(
@@ -342,21 +485,23 @@ pub async fn handle_publish_atoms(
 ) -> Result<Value> {
     // Auth and rate limiting for mutating methods
     let agent_id = authenticate_and_rate_limit(state, &params).await?;
-    
+
     let params = params.ok_or_else(|| MoteError::Validation("Missing params".to_string()))?;
-    
+
     let atoms_value: Value = serde_json::from_value(params["atoms"].clone())
         .map_err(|_| MoteError::Validation("atoms field required".to_string()))?;
-    
+
     let atoms_array = atoms_value.as_array()
         .ok_or_else(|| MoteError::Validation("atoms must be an array".to_string()))?;
 
-    let mut published_atoms = Vec::new();
-    
+    let mut published_atoms: Vec<String> = Vec::new();
+    let mut pheromone_deltas: Vec<Value> = Vec::new();
+    let mut auto_contradictions: Vec<Value> = Vec::new();
+
     for atom_value in atoms_array {
         let atom_type_str: String = serde_json::from_value(atom_value["atom_type"].clone())
             .map_err(|_| MoteError::Validation("atom_type field required".to_string()))?;
-        
+
         let atom_type = match atom_type_str.as_str() {
             "hypothesis" => crate::domain::atom::AtomType::Hypothesis,
             "finding" => crate::domain::atom::AtomType::Finding,
@@ -368,12 +513,15 @@ pub async fn handle_publish_atoms(
             _ => return Err(MoteError::Validation(format!("Unknown atom type: {}", atom_type_str))),
         };
 
+        let domain: String = serde_json::from_value(atom_value["domain"].clone())
+            .map_err(|_| MoteError::Validation("domain field required".to_string()))?;
+
         let conditions = if atom_value["conditions"].is_null() {
             json!({})
         } else {
             atom_value["conditions"].clone()
         };
-        
+
         let provenance = if atom_value["provenance"].is_null() {
             json!({})
         } else {
@@ -399,25 +547,96 @@ pub async fn handle_publish_atoms(
             Some(v) => serde_json::from_value::<Vec<u8>>(v.clone()).unwrap_or_default(),
         };
 
+        let statement: String = serde_json::from_value(atom_value["statement"].clone())
+            .map_err(|_| MoteError::Validation("statement field required".to_string()))?;
+
         let atom_input = crate::domain::atom::AtomInput {
-            atom_type,
-            domain: serde_json::from_value(atom_value["domain"].clone())
-                .map_err(|_| MoteError::Validation("domain field required".to_string()))?,
-            statement: serde_json::from_value(atom_value["statement"].clone())
-                .map_err(|_| MoteError::Validation("statement field required".to_string()))?,
-            conditions,
-            metrics,
+            atom_type: atom_type.clone(),
+            domain: domain.clone(),
+            statement,
+            conditions: conditions.clone(),
+            metrics: metrics.clone(),
             provenance,
             signature: atom_signature,
             artifact_tree_hash,
         };
 
         let atom_id = crate::db::queries::publish_atom(&state.pool, &agent_id, atom_input).await?;
-        
+
         // Update graph cache incrementally
-        let mut cache = state.graph_cache.write().await;
-        cache.add_node(atom_id.clone());
-        
+        {
+            let mut cache = state.graph_cache.write().await;
+            cache.add_node(atom_id.clone());
+        }
+
+        // Emit atom_published SSE event (fire-and-forget; ignore if no subscribers)
+        let _ = state.sse_broadcast_tx.send(crate::state::SseEvent {
+            event_type: "atom_published".to_string(),
+            data: json!({
+                "type":      "atom_published",
+                "atom_id":   atom_id,
+                "domain":    domain,
+                "atom_type": atom_type.to_string(),
+            }),
+            timestamp: chrono::Utc::now(),
+        });
+
+        // ── Pheromone + contradiction updates ────────────────────────────────
+        let is_evidence = matches!(atom_type,
+            crate::domain::atom::AtomType::Finding |
+            crate::domain::atom::AtomType::NegativeResult);
+
+        let mut attraction_delta = 0.0_f64;
+        let mut disagreement_delta = 0.0_f64;
+
+        if is_evidence {
+            // Detect contradictions before bumping pheromone
+            let contradictions = crate::db::queries::find_contradicting_atoms(
+                &state.pool, &domain, &atom_id, &conditions, &metrics,
+            ).await?;
+
+            for c in &contradictions {
+                // Bump disagreement on both atoms
+                crate::db::queries::update_pheromone_disagreement(
+                    &state.pool, &atom_id, &c.existing_atom_id,
+                ).await?;
+                disagreement_delta += 0.1;
+
+                auto_contradictions.push(json!({
+                    "new_atom_id":        atom_id,
+                    "existing_atom_id":   c.existing_atom_id,
+                    "existing_statement": c.existing_statement,
+                    "conflicting_metrics": c.conflicting_metrics,
+                }));
+
+                let _ = state.sse_broadcast_tx.send(crate::state::SseEvent {
+                    event_type: "contradiction_detected".to_string(),
+                    data: json!({
+                        "type":                 "contradiction_detected",
+                        "atom_id":              atom_id,
+                        "contradicting_atom_id": c.existing_atom_id,
+                        "domain":               domain,
+                    }),
+                    timestamp: chrono::Utc::now(),
+                });
+            }
+
+            // For findings with positive metrics, bump attraction in the neighbourhood.
+            // Use 0.1 as a fixed delta (proper metric-improvement scoring is a future enhancement).
+            if matches!(atom_type, crate::domain::atom::AtomType::Finding) {
+                crate::db::queries::update_pheromone_attraction(
+                    &state.pool, &domain, &atom_id, 0.1,
+                ).await?;
+                attraction_delta = 0.1;
+            }
+        }
+
+        pheromone_deltas.push(json!({
+            "atom_id":           atom_id.clone(),
+            "attraction_delta":  attraction_delta,
+            "disagreement_delta": disagreement_delta,
+        }));
+
         published_atoms.push(atom_id);
     }
 
@@ -425,7 +644,11 @@ pub async fn handle_publish_atoms(
     state.metrics.publish_requests_accepted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     state.metrics.publish_requests_queued.fetch_add(published_atoms.len() as u64, std::sync::atomic::Ordering::Relaxed);
 
-    Ok(json!({ "published_atoms": published_atoms }))
+    Ok(json!({
+        "published_atoms":    published_atoms,
+        "pheromone_deltas":   pheromone_deltas,
+        "auto_contradictions": auto_contradictions,
+    }))
 }
 
 pub async fn handle_retract_atom(

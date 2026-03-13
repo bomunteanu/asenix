@@ -1,0 +1,61 @@
+{
+  "timestamp": "2026-03-13T20:44:08.918478",
+  "summary": {
+    "total_tests": 6,
+    "successful_tests": 1,
+    "failed_tests": 5,
+    "success_rate": 16.666666666666664,
+    "total_duration": 0.546245813369751,
+    "suite_duration": 0.627203
+  },
+  "test_results": {
+    "Install Python dependencies": {
+      "command": "pip3 install aiohttp cryptography numpy",
+      "success": true,
+      "duration": 0.36314868927001953,
+      "stdout": "Defaulting to user installation because normal site-packages is not writeable\nRequirement already satisfied: aiohttp in /Users/bogdanmunteanu/.local/lib/python3.12/site-packages (3.13.3)\nRequirement already satisfied: cryptography in /Users/bogdanmunteanu/.local/lib/python3.12/site-packages (46.0.5)\nRequirement already satisfied: numpy in /Users/bogdanmunteanu/.local/lib/python3.12/site-packages (2.4.2)\nRequirement already satisfied: aiohappyeyeballs>=2.5.0 in /Users/bogdanmunteanu/.local/lib/python3.12/site-packages (from aiohttp) (2.6.1)\nRequirement already satisfied: aiosignal>=1.4.0 in /Users/bogdanmunteanu/.local/lib/python3.12/site-packages (from aiohttp) (1.4.0)\nRequirement already satisfied: attrs>=17.3.0 in /Users/bogdanmunteanu/.local/lib/python3.12/site-packages (from aiohttp) (25.4.0)\nRequirement already satisfied: frozenlist>=1.1.1 in /Users/bogdanmunteanu/.local/lib/python3.12/site-packages (from aiohttp) (1.8.0)\nRequirement already satisfied: multidict<7.0,>=4.5 in /Users/bogdanmunteanu/.local/lib/python3.12/site-packages (from aiohttp) (6.7.1)\nRequirement already satisfied: propcache>=0.2.0 in /Users/bogdanmunteanu/.local/lib/python3.12/site-packages (from aiohttp) (0.4.1)\nRequirement already satisfied: yarl<2.0,>=1.17.0 in /Users/bogdanmunteanu/.local/lib/python3.12/site-packages (from aiohttp) (1.23.0)\nRequirement already satisfied: idna>=2.0 in /Users/bogdanmunteanu/miniforge3/lib/python3.12/site-packages (from yarl<2.0,>=1.17.0->aiohttp) (3.11)\nRequirement already satisfied: cffi>=2.0.0 in /Users/bogdanmunteanu/miniforge3/lib/python3.12/site-packages (from cryptography) (2.0.0)\nRequirement already satisfied: typing-extensions>=4.2 in /Users/bogdanmunteanu/.local/lib/python3.12/site-packages (from aiosignal>=1.4.0->aiohttp) (4.15.0)\nRequirement already satisfied: pycparser in /Users/bogdanmunteanu/miniforge3/lib/python3.12/site-packages (from cffi>=2.0.0->cryptography) (2.22)\n",
+      "stderr": "",
+      "return_code": 0
+    },
+    "Basic functionality test": {
+      "command": "python3 tests/mcp-py-tests/mcp-test.py",
+      "success": false,
+      "duration": 0.0370941162109375,
+      "stdout": "",
+      "stderr": "/Users/bogdanmunteanu/miniforge3/bin/python3: can't open file '/Users/bogdanmunteanu/Desktop/Projects/mote/tests/mcp-py-tests/tests/mcp-py-tests/mcp-test.py': [Errno 2] No such file or directory\n",
+      "return_code": 2
+    },
+    "Load test (100 agents, 10 ops each)": {
+      "command": "python3 tests/mcp-py-tests/load_test.py --agents 100 --operations 10 --batches 5",
+      "success": false,
+      "duration": 0.036499977111816406,
+      "stdout": "",
+      "stderr": "/Users/bogdanmunteanu/miniforge3/bin/python3: can't open file '/Users/bogdanmunteanu/Desktop/Projects/mote/tests/mcp-py-tests/tests/mcp-py-tests/load_test.py': [Errno 2] No such file or directory\n",
+      "return_code": 2
+    },
+    "Embedding queue stress test": {
+      "command": "python3 tests/mcp-py-tests/embedding_stress_test.py --agents 50 --atoms-per-batch 20 --concurrent-publishers 10",
+      "success": false,
+      "duration": 0.03660702705383301,
+      "stdout": "",
+      "stderr": "/Users/bogdanmunteanu/miniforge3/bin/python3: can't open file '/Users/bogdanmunteanu/Desktop/Projects/mote/tests/mcp-py-tests/tests/mcp-py-tests/embedding_stress_test.py': [Errno 2] No such file or directory\n",
+      "return_code": 2
+    },
+    "pgvector HNSW contention test": {
+      "command": "python3 tests/mcp-py-tests/hnsw_contention_test.py --agents 30 --atoms-per-agent 50 --concurrent-searchers 15",
+      "success": false,
+      "duration": 0.036910057067871094,
+      "stdout": "",
+      "stderr": "/Users/bogdanmunteanu/miniforge3/bin/python3: can't open file '/Users/bogdanmunteanu/Desktop/Projects/mote/tests/mcp-py-tests/tests/mcp-py-tests/hnsw_contention_test.py': [Errno 2] No such file or directory\n",
+      "return_code": 2
+    },
+    "High-intensity load test (200 agents)": {
+      "command": "python3 tests/mcp-py-tests/load_test.py --agents 200 --operations 20 --batches 8",
+      "success": false,
+      "duration": 0.03598594665527344,
+      "stdout": "",
+      "stderr": "/Users/bogdanmunteanu/miniforge3/bin/python3: can't open file '/Users/bogdanmunteanu/Desktop/Projects/mote/tests/mcp-py-tests/tests/mcp-py-tests/load_test.py': [Errno 2] No such file or directory\n",
+      "return_code": 2
+    }
+  }
+}

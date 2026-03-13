@@ -102,6 +102,7 @@ async fn main() -> anyhow::Result<()> {
     let staleness_worker = workers::staleness::StalenessWorker::new(
         state.pool.clone(),
         state.config.hub.neighbourhood_radius,
+        state.sse_broadcast_tx.clone(),
     );
 
     // Spawn workers

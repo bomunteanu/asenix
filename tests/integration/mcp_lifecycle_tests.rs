@@ -7,7 +7,9 @@ use tower::ServiceExt;
 
 use super::setup_test_app;
 use super::initialize_session;
+use serial_test::serial;
 
+#[serial]
 #[tokio::test]
 async fn test_mcp_initialize_lifecycle() {
     let app = setup_test_app().await;
@@ -96,6 +98,7 @@ async fn test_mcp_initialize_lifecycle() {
     assert_eq!(tools.len(), 10); // register_agent_simple + 9 original tools
 }
 
+#[serial]
 #[tokio::test]
 async fn test_mcp_session_validation() {
     let app = setup_test_app().await;
@@ -152,6 +155,7 @@ async fn test_mcp_session_validation() {
     assert_eq!(response.status(), StatusCode::OK);
 }
 
+#[serial]
 #[tokio::test]
 async fn test_mcp_session_termination() {
     let app = setup_test_app().await;
@@ -222,6 +226,7 @@ async fn test_mcp_session_termination() {
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }
 
+#[serial]
 #[tokio::test]
 async fn test_mcp_uninitialized_session() {
     let app = setup_test_app().await;
@@ -287,6 +292,7 @@ async fn test_mcp_uninitialized_session() {
     assert!(error.get("message").unwrap().as_str().unwrap().contains("not initialized"));
 }
 
+#[serial]
 #[tokio::test]
 async fn test_mcp_ping() {
     let app = setup_test_app().await;
@@ -320,6 +326,7 @@ async fn test_mcp_ping() {
     assert!(response_json.get("result").unwrap().as_object().unwrap().is_empty());
 }
 
+#[serial]
 #[tokio::test]
 async fn test_mcp_unknown_method() {
     let app = setup_test_app().await;

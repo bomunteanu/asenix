@@ -1,5 +1,7 @@
 use super::{setup_test_app, make_http_request};
+use serial_test::serial;
 
+#[serial]
 #[tokio::test]
 async fn test_health_endpoint_happy_path() {
     let app = setup_test_app().await;
@@ -30,6 +32,7 @@ async fn test_health_endpoint_happy_path() {
     assert_eq!(response["embedding_queue_depth"].as_u64().unwrap(), 0);
 }
 
+#[serial]
 #[tokio::test]
 async fn test_metrics_endpoint_basic() {
     let app = setup_test_app().await;
@@ -47,6 +50,7 @@ async fn test_metrics_endpoint_basic() {
     assert!(body.contains("# TYPE"));
 }
 
+#[serial]
 #[tokio::test]
 async fn test_health_endpoint_after_agent_registration() {
     let app = setup_test_app().await;
@@ -86,6 +90,7 @@ async fn test_health_endpoint_after_agent_registration() {
     assert_eq!(response["graph_edges"].as_u64().unwrap(), 0);
 }
 
+#[serial]
 #[tokio::test]
 async fn test_metrics_endpoint_after_agent_registration() {
     let app = setup_test_app().await;
@@ -116,6 +121,7 @@ async fn test_metrics_endpoint_after_agent_registration() {
     assert!(!body.is_empty());
 }
 
+#[serial]
 #[tokio::test]
 async fn test_health_endpoint_response_structure() {
     let app = setup_test_app().await;
@@ -137,6 +143,7 @@ async fn test_health_endpoint_response_structure() {
     assert!(response["embedding_queue_depth"].is_number());
 }
 
+#[serial]
 #[tokio::test]
 async fn test_metrics_endpoint_prometheus_format() {
     let app = setup_test_app().await;
@@ -165,6 +172,7 @@ async fn test_metrics_endpoint_prometheus_format() {
     assert!(!metric_lines.is_empty(), "Should have actual metric lines");
 }
 
+#[serial]
 #[tokio::test]
 async fn test_invalid_endpoint_returns_404() {
     let app = setup_test_app().await;
@@ -176,6 +184,7 @@ async fn test_invalid_endpoint_returns_404() {
     assert_eq!(status, axum::http::StatusCode::NOT_FOUND);
 }
 
+#[serial]
 #[tokio::test]
 async fn test_invalid_method_returns_405() {
     let app = setup_test_app().await;

@@ -1,19 +1,28 @@
 use sqlx::{PgPool, Row};
+use tokio::sync::broadcast;
 use tracing::{info, error, debug};
 use std::time::Duration;
+
+use crate::state::SseEvent;
 
 pub struct StalenessWorker {
     pool: PgPool,
     neighbourhood_radius: f64,
     staleness_threshold: usize,
+    sse_tx: broadcast::Sender<SseEvent>,
 }
 
 impl StalenessWorker {
-    pub fn new(pool: PgPool, neighbourhood_radius: f64) -> Self {
+    pub fn new(
+        pool: PgPool,
+        neighbourhood_radius: f64,
+        sse_tx: broadcast::Sender<SseEvent>,
+    ) -> Self {
         Self {
             pool,
             neighbourhood_radius,
-            staleness_threshold: 20, // Default threshold
+            staleness_threshold: 20,
+            sse_tx,
         }
     }
 
@@ -58,7 +67,7 @@ impl StalenessWorker {
                 
                 // Emit synthesis_needed event
                 if let Some(embedding) = embedding {
-                    self.emit_synthesis_needed_event(&embedding, newer_atoms_count as usize).await?;
+                    self.emit_synthesis_needed_event(&embedding, newer_atoms_count as usize);
                 }
                 stale_count += 1;
             }
@@ -71,24 +80,23 @@ impl StalenessWorker {
         Ok(stale_count)
     }
 
-    /// Emit synthesis_needed event to the broadcast channel
-    async fn emit_synthesis_needed_event(
-        &self,
-        cluster_center: &[f64],
-        atom_count: usize,
-    ) -> Result<(), sqlx::Error> {
-        // For now, we'll log the event. In a full implementation,
-        // this would emit to the SSE broadcast channel
+    /// Emit synthesis_needed event to the SSE broadcast channel.
+    fn emit_synthesis_needed_event(&self, cluster_center: &[f64], atom_count: usize) {
+        let event = SseEvent {
+            event_type: "synthesis_needed".to_string(),
+            data: serde_json::json!({
+                "type": "synthesis_needed",
+                "cluster_center": cluster_center,
+                "atom_count": atom_count,
+            }),
+            timestamp: chrono::Utc::now(),
+        };
+        // SendError only occurs when there are no receivers — safe to ignore.
+        let _ = self.sse_tx.send(event);
         debug!(
-            "Would emit synthesis_needed event: cluster_center={:?}, atom_count={}",
-            cluster_center, atom_count
+            "Emitted synthesis_needed event: atom_count={}",
+            atom_count
         );
-
-        // TODO: Actually emit to SSE broadcast channel
-        // This requires access to the broadcast channel from AppState
-        // For now, we'll just log it
-
-        Ok(())
     }
 
     /// Start the periodic staleness worker

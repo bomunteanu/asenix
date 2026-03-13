@@ -1,6 +1,7 @@
 use super::{setup_test_app, initialize_session, make_tool_call};
 use ed25519_dalek::Signer;
 use serde_json::json;
+use serial_test::serial;
 
 /// Compute top-level signature for publish_atoms.
 /// The server's authenticate_and_rate_limit removes the top-level "signature"
@@ -21,6 +22,7 @@ fn sign_publish_atoms(
     hex::encode(signature.to_bytes())
 }
 
+#[serial]
 #[tokio::test]
 async fn test_end_to_end_coordination() -> Result<(), Box<dyn std::error::Error>> {
     let app = setup_test_app().await;

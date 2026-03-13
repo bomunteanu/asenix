@@ -1,6 +1,8 @@
 use super::{setup_test_app, initialize_session, make_tool_call};
 use ed25519_dalek::Signer;
+use serial_test::serial;
 
+#[serial]
 #[tokio::test]
 async fn test_agent_registration_success() {
     let app = setup_test_app().await;
@@ -34,6 +36,7 @@ async fn test_agent_registration_success() {
     assert!(response.get("error").is_some() && response["error"].is_null(), "Response should have null error field");
 }
 
+#[serial]
 #[tokio::test]
 async fn test_agent_registration_duplicate_public_key() {
     let app = setup_test_app().await;
@@ -67,6 +70,7 @@ async fn test_agent_registration_duplicate_public_key() {
     assert!(error_code < 0, "Error code should be negative for server errors");
 }
 
+#[serial]
 #[tokio::test]
 async fn test_agent_confirmation_success() {
     let app = setup_test_app().await;
@@ -103,6 +107,7 @@ async fn test_agent_confirmation_success() {
     assert_eq!(result["status"].as_str().unwrap(), "confirmed");
 }
 
+#[serial]
 #[tokio::test]
 async fn test_agent_confirmation_bad_signature() {
     let app = setup_test_app().await;
@@ -138,6 +143,7 @@ async fn test_agent_confirmation_bad_signature() {
     assert!(error_code < 0, "Error code should be negative for server errors");
 }
 
+#[serial]
 #[tokio::test]
 async fn test_agent_confirmation_invalid_agent_id() {
     let app = setup_test_app().await;
@@ -162,6 +168,7 @@ async fn test_agent_confirmation_invalid_agent_id() {
     assert!(error_code < 0, "Error code should be negative for server errors");
 }
 
+#[serial]
 #[tokio::test]
 async fn test_agent_registration_invalid_public_key() {
     let app = setup_test_app().await;
@@ -183,6 +190,7 @@ async fn test_agent_registration_invalid_public_key() {
     assert!(error_code < 0, "Error code should be negative for server errors");
 }
 
+#[serial]
 #[tokio::test]
 async fn test_agent_registration_missing_public_key() {
     let app = setup_test_app().await;
@@ -202,6 +210,7 @@ async fn test_agent_registration_missing_public_key() {
     assert!(error_code < 0, "Error code should be negative for server errors");
 }
 
+#[serial]
 #[tokio::test]
 async fn test_agent_confirmation_missing_fields() {
     let app = setup_test_app().await;
@@ -222,6 +231,7 @@ async fn test_agent_confirmation_missing_fields() {
     assert!(response2["error"].is_object());
 }
 
+#[serial]
 #[tokio::test]
 async fn test_agent_confirmation_invalid_signature_format() {
     let app = setup_test_app().await;

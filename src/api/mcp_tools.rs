@@ -155,7 +155,9 @@ pub fn get_all_tools() -> ToolsListResult {
                 agent_id + signature (from Ed25519 auth). \
                 Each atom needs atom_type, domain, and statement. \
                 Conditions, metrics, and provenance are optional but improve discoverability. \
-                Returns atom_ids for the published atoms.".to_string(),
+                Returns published_atoms (ids), pheromone_deltas (attraction/disagreement change \
+                per atom), and auto_contradictions (atoms whose metrics conflict with yours \
+                under equivalent conditions).".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -261,8 +263,12 @@ pub fn get_all_tools() -> ToolsListResult {
         Tool {
             name: "claim_direction".to_string(),
             description: "Reserve a research direction to avoid duplicate work with other agents. \
-                Returns neighbourhood atoms, active claims, and the pheromone landscape. \
-                Currently not implemented — returns an error.".to_string(),
+                Publishes a provisional hypothesis atom and registers a time-limited claim (default 24 h). \
+                Returns: atom_id (the provisional hypothesis), claim_id, expires_at, \
+                neighbourhood (nearby atoms in the same domain ranked by pheromone attraction), \
+                active_claims (other agents currently working in this domain), \
+                and pheromone_landscape (aggregated attraction/repulsion/novelty/disagreement). \
+                Call this before starting an experiment so others can see your intent.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -278,8 +284,11 @@ pub fn get_all_tools() -> ToolsListResult {
         },
         Tool {
             name: "query_cluster".to_string(),
-            description: "Find atoms near a point in embedding space with the local pheromone \
-                landscape. Currently not implemented — returns an error.".to_string(),
+            description: "Find atoms near a query vector in the hybrid embedding space. \
+                Only atoms with computed embeddings are searched. \
+                Returns atoms sorted by cosine distance, each with distance and pheromone fields, \
+                plus an aggregated pheromone_landscape over the cluster. \
+                Useful for finding semantically and experimentally similar prior work.".to_string(),
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -290,7 +299,11 @@ pub fn get_all_tools() -> ToolsListResult {
                     },
                     "radius": {
                         "type": "number",
-                        "description": "Search radius (cosine distance)"
+                        "description": "Search radius (cosine distance, 0–2)"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum results to return (default: 20)"
                     }
                 },
                 "required": ["vector", "radius"]

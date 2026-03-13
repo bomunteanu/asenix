@@ -1,11 +1,15 @@
 // Integration tests module
 
+mod claim_direction_tests;
+mod publish_atoms_tests;
+mod query_cluster_tests;
 mod health_tests;
 mod schema_tests;
 mod agent_registration_tests;
 mod coordination_test_fixed;
 mod mcp_lifecycle_tests;
 mod mcp_tools_tests;
+mod sse_tests;
 
 use axum::Router;
 use axum::http::{Request, Method};
