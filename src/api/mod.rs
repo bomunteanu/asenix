@@ -6,3 +6,4 @@ pub mod mcp_tools;
 pub mod mcp_resources;
 pub mod sse;
 pub mod artifacts;
+pub mod artifact_processor;

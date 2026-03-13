@@ -148,6 +148,7 @@ pub async fn handle_mcp(
                         MoteError::Serialization(_) => "serialization",
                         MoteError::Configuration(_) => "configuration",
                         MoteError::Cryptography(_) => "cryptography",
+                        MoteError::Storage(_) => "storage",
                     }
                 })),
             }),
@@ -159,7 +160,7 @@ pub async fn handle_mcp(
 // Authentication and rate limiting for mutating methods.
 // Accepts either token-based auth (api_token field) or Ed25519 signature-based auth
 // (signature field). Token-based auth is the recommended path for AI agents.
-async fn authenticate_and_rate_limit(
+pub async fn authenticate_and_rate_limit(
     state: &AppState,
     params: &Option<Value>,
 ) -> Result<String> {
@@ -343,6 +344,19 @@ pub async fn handle_query_cluster(
         .map_err(|_| MoteError::Validation("radius field required (number)".to_string()))?;
 
     let limit: i64 = serde_json::from_value(params["limit"].clone()).unwrap_or(20);
+    
+    // Enhanced parameters
+    let max_hops: u32 = serde_json::from_value(params["max_hops"].clone()).unwrap_or(1);
+    let edge_types: Option<Vec<String>> = serde_json::from_value(params["edge_types"].clone()).ok();
+    let include_graph_traversal: bool = serde_json::from_value(params["include_graph_traversal"].clone()).unwrap_or(false);
+    let cache_key: Option<String> = serde_json::from_value(params["cache_key"].clone()).ok();
+
+    // Check cache first if provided
+    if let Some(ref key) = cache_key {
+        if let Some(cached_result) = state.graph_cache.read().await.get_cluster_result(key) {
+            return Ok(cached_result);
+        }
+    }
 
     let results = crate::db::queries::query_cluster_atoms(&state.pool, vector, radius, limit).await?;
 
@@ -363,6 +377,23 @@ pub async fn handle_query_cluster(
         "lifecycle": r.atom.lifecycle.to_string(),
     })).collect();
 
+    // Add graph traversal information if requested
+    let graph_traversal = if include_graph_traversal && !results.is_empty() {
+        let atom_ids: Vec<String> = results.iter().map(|r| r.atom.atom_id.clone()).collect();
+        let traversal_info = crate::db::queries::get_graph_traversal_info(
+            &state.pool, &atom_ids, max_hops, edge_types.as_deref()
+        ).await.unwrap_or_default();
+        
+        Some(json!({
+            "hops_explored": traversal_info.hops_explored,
+            "connected_atoms": traversal_info.connected_atoms,
+            "edge_types_found": traversal_info.edge_types_found,
+            "traversal_paths": traversal_info.paths
+        }))
+    } else {
+        None
+    };
+
     let pheromone_landscape = if results.is_empty() {
         json!({"attraction": 0.0, "repulsion": 0.0, "novelty": 1.0, "disagreement": 0.0})
     } else {
@@ -375,11 +406,29 @@ pub async fn handle_query_cluster(
         })
     };
 
-    Ok(json!({
+    let mut response = json!({
         "atoms":              atoms_json,
         "pheromone_landscape": pheromone_landscape,
         "total":              results.len(),
-    }))
+        "query_params": {
+            "radius": radius,
+            "limit": limit,
+            "max_hops": max_hops,
+            "edge_types": edge_types,
+        }
+    });
+
+    // Add graph traversal to response if available
+    if let Some(traversal) = graph_traversal {
+        response["graph_traversal"] = traversal;
+    }
+
+    // Cache the result if cache key provided
+    if let Some(ref key) = cache_key {
+        state.graph_cache.write().await.set_cluster_result(key.clone(), response.clone());
+    }
+
+    Ok(response)
 }
 
 pub async fn handle_claim_direction(
@@ -412,6 +461,7 @@ pub async fn handle_claim_direction(
         provenance: json!({}),
         signature: vec![],
         artifact_tree_hash: None,
+        artifact_inline: None,
     };
     let atom_id = crate::db::queries::publish_atom(&state.pool, &agent_id, atom_input).await?;
 
@@ -425,6 +475,12 @@ pub async fn handle_claim_direction(
     let claim_id = uuid::Uuid::new_v4().to_string();
     let ttl_hours = state.config.workers.claim_ttl_hours as i64;
     let expires_at = chrono::Utc::now() + chrono::Duration::hours(ttl_hours);
+    
+    // Check for potential claim conflicts before creating
+    let potential_conflicts = crate::db::queries::find_potential_claim_conflicts(
+        &state.pool, &domain, &hypothesis, &conditions
+    ).await.unwrap_or_default();
+    
     crate::db::queries::create_claim(&state.pool, &claim_id, &atom_id, &agent_id, expires_at).await?;
 
     // Gather neighbourhood atoms (same domain, up to 10)
@@ -432,6 +488,9 @@ pub async fn handle_claim_direction(
 
     // Gather active claims in this domain
     let active_claims = crate::db::queries::get_active_claims_in_domain(&state.pool, &domain).await?;
+    
+    // Calculate claim density for this domain
+    let claim_density = crate::db::queries::calculate_claim_density(&state.pool, &domain).await.unwrap_or(0.0);
 
     let neighbourhood_json: Vec<Value> = neighbourhood.iter().map(|a| json!({
         "atom_id":    a.atom_id,
@@ -456,9 +515,15 @@ pub async fn handle_claim_direction(
         "expires_at": c.expires_at.to_rfc3339(),
     })).collect();
 
-    // Aggregate pheromone landscape for the domain
+    // Aggregate pheromone landscape for the domain (enhanced with claim density)
     let pheromone_landscape = if neighbourhood.is_empty() {
-        json!({"attraction": 0.0, "repulsion": 0.0, "novelty": 1.0, "disagreement": 0.0})
+        json!({
+            "attraction": 0.0, 
+            "repulsion": 0.0, 
+            "novelty": 1.0, 
+            "disagreement": 0.0,
+            "claim_density": claim_density
+        })
     } else {
         let n = neighbourhood.len() as f64;
         json!({
@@ -466,8 +531,19 @@ pub async fn handle_claim_direction(
             "repulsion":    neighbourhood.iter().map(|a| a.ph_repulsion).sum::<f64>() / n,
             "novelty":      neighbourhood.iter().map(|a| a.ph_novelty).sum::<f64>() / n,
             "disagreement": neighbourhood.iter().map(|a| a.ph_disagreement).sum::<f64>() / n,
+            "claim_density": claim_density
         })
     };
+    
+    // Format potential conflicts for response
+    let conflicts_json: Vec<Value> = potential_conflicts.iter().map(|c| json!({
+        "claim_id": c.claim_id,
+        "agent_id": c.agent_id,
+        "hypothesis": c.hypothesis,
+        "conditions": c.conditions,
+        "similarity_score": c.similarity_score,
+        "conflict_type": c.conflict_type
+    })).collect();
 
     Ok(json!({
         "atom_id":             atom_id,
@@ -476,6 +552,13 @@ pub async fn handle_claim_direction(
         "neighbourhood":       neighbourhood_json,
         "active_claims":       active_claims_json,
         "pheromone_landscape": pheromone_landscape,
+        "potential_conflicts": conflicts_json,
+        "claim_density":       claim_density,
+        "warnings":           if !conflicts_json.is_empty() { 
+                                vec![format!("{} potential claim conflicts detected", conflicts_json.len())] 
+                              } else { 
+                                vec![] 
+                              }
     }))
 }
 
@@ -537,6 +620,20 @@ pub async fn handle_publish_atoms(
         let artifact_tree_hash: Option<String> = serde_json::from_value(atom_value["artifact_tree_hash"].clone())
             .unwrap_or(None);
 
+        let artifact_inline: Option<crate::api::artifact_processor::InlineArtifact> = 
+            serde_json::from_value(atom_value["artifact_inline"].clone())
+            .unwrap_or(None);
+
+        // Process inline artifact if present
+        let final_artifact_hash = if let Some(artifact) = artifact_inline {
+            let artifact_hash = crate::api::artifact_processor::process_inline_artifact(
+                &state.pool, &*state.storage, &agent_id, artifact
+            ).await?;
+            Some(artifact_hash)
+        } else {
+            artifact_tree_hash
+        };
+
         // Per-atom signature is stored but not verified; accept hex string, raw bytes,
         // or absent (token-auth agents don't need to sign individual atoms).
         let atom_signature: Vec<u8> = match atom_value.get("signature") {
@@ -558,7 +655,8 @@ pub async fn handle_publish_atoms(
             metrics: metrics.clone(),
             provenance,
             signature: atom_signature,
-            artifact_tree_hash,
+            artifact_tree_hash: final_artifact_hash,
+            artifact_inline: None, // Processed inline artifacts are stored as tree_hash
         };
 
         let atom_id = crate::db::queries::publish_atom(&state.pool, &agent_id, atom_input).await?;

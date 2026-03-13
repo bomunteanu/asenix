@@ -135,6 +135,7 @@ impl Metrics {
 pub struct ReviewQuery {
     pub limit: Option<i64>,
     pub offset: Option<i64>,
+    pub domain: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -171,39 +172,32 @@ pub async fn get_review_queue(
 ) -> std::result::Result<Json<Value>, (StatusCode, String)> {
     let limit = query.limit.unwrap_or(50);
     let offset = query.offset.unwrap_or(0);
+    let domain_filter = query.domain.as_deref();
     
-    // For now, return all atoms since we don't have a review queue table yet
-    // TODO: Implement proper review queue with acceptance pipeline integration
-    let atoms = sqlx::query(
-        "SELECT atom_id, type, domain, statement, author_agent_id, created_at 
-         FROM atoms 
-         WHERE NOT retracted 
-         ORDER BY created_at DESC 
-         LIMIT $1 OFFSET $2"
-    )
-    .bind(limit)
-    .bind(offset)
-    .fetch_all(&state.pool)
-    .await
-    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    // Get actual review queue items
+    let review_items = crate::db::queries::get_review_queue(&state.pool, limit, offset, domain_filter)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    
+    // Get total count for pagination
+    let total = crate::db::queries::get_review_queue_count(&state.pool, domain_filter)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 
-    let mut review_items = Vec::new();
-    for row in atoms {
-        review_items.push(json!({
-            "atom_id": row.get::<String, &str>("atom_id").to_string(),
-            "atom_type": row.get::<String, &str>("type").to_string(),
-            "domain": row.get::<String, &str>("domain").to_string(),
-            "statement": row.get::<String, &str>("statement").to_string(),
-            "author_agent_id": row.get::<String, &str>("author_agent_id").to_string(),
-            "created_at": row.get::<chrono::DateTime<chrono::Utc>, _>("created_at"),
-            "review_status": "pending",
-            "review_reason": None::<String>
-        }));
-    }
+    let items_json: Vec<Value> = review_items.iter().map(|item| json!({
+        "atom_id": item.atom_id,
+        "atom_type": item.atom_type,
+        "domain": item.domain,
+        "statement": item.statement,
+        "author_agent_id": item.author_agent_id,
+        "created_at": item.created_at,
+        "review_status": item.review_status,
+        "auto_review_eligible": item.auto_review_eligible
+    })).collect();
 
     Ok(Json(json!({
-        "items": review_items,
-        "total": review_items.len(),
+        "items": items_json,
+        "total": total,
         "limit": limit,
         "offset": offset
     })))
@@ -214,6 +208,11 @@ pub async fn review_atom(
     Path(atom_id): Path<String>,
     Json(action): Json<ReviewAction>,
 ) -> std::result::Result<Json<Value>, (StatusCode, String)> {
+    // Validate action
+    if !matches!(action.action.as_str(), "approve" | "reject") {
+        return Err((StatusCode::BAD_REQUEST, "Invalid action. Must be 'approve' or 'reject'".to_string()));
+    }
+
     // Check if atom exists
     let atom_exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM atoms WHERE atom_id = $1)")
         .bind(&atom_id)
@@ -225,21 +224,31 @@ pub async fn review_atom(
         return Err((StatusCode::NOT_FOUND, "Atom not found".to_string()));
     }
 
-    // For now, just return a success response
-    // TODO: Implement actual review logic with database table
-    let response = match action.action.as_str() {
-        "approve" => json!({
-            "status": "approved",
-            "atom_id": atom_id,
-            "reason": action.reason.unwrap_or("Approved by reviewer".to_string())
-        }),
-        "reject" => json!({
-            "status": "rejected", 
-            "atom_id": atom_id,
-            "reason": action.reason.unwrap_or("Rejected by reviewer".to_string())
-        }),
-        _ => return Err((StatusCode::BAD_REQUEST, "Invalid action. Must be 'approve' or 'reject'".to_string())),
-    };
+    // For testing, use the atom author as the reviewer (self-review)
+    // TODO: Add proper authentication for reviewers
+    let reviewer_agent_id: String = sqlx::query_scalar("SELECT author_agent_id FROM atoms WHERE atom_id = $1")
+        .bind(&atom_id)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    // Create review record and update atom status
+    let review_id = crate::db::queries::create_review(
+        &state.pool,
+        &atom_id,
+        &reviewer_agent_id,
+        &action.action,
+        action.reason.as_deref(),
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let response = json!({
+        "status": action.action,
+        "atom_id": atom_id,
+        "review_id": review_id,
+        "reason": action.reason.unwrap_or("Reviewed by system".to_string())
+    });
 
     Ok(Json(response))
 }

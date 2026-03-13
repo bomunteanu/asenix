@@ -798,3 +798,505 @@ pub async fn retract_atom(
 
     Ok(())
 }
+
+// Review queue functions
+
+#[derive(Debug)]
+pub struct ReviewQueueItem {
+    pub atom_id: String,
+    pub atom_type: String,
+    pub domain: String,
+    pub statement: String,
+    pub author_agent_id: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub review_status: String,
+    pub auto_review_eligible: bool,
+}
+
+/// Get atoms pending review, with optional filtering
+pub async fn get_review_queue(
+    pool: &PgPool,
+    limit: i64,
+    offset: i64,
+    domain_filter: Option<&str>,
+) -> Result<Vec<ReviewQueueItem>> {
+    let query = if let Some(domain) = domain_filter {
+        sqlx::query(
+            "SELECT a.atom_id, a.type, a.domain, a.statement, a.author_agent_id, a.created_at, a.review_status,
+                    CASE WHEN ag.reliability >= 0.8 AND ag.atoms_published >= 5 THEN true ELSE false END as auto_review_eligible
+             FROM atoms a
+             JOIN agents ag ON a.author_agent_id = ag.agent_id
+             WHERE a.review_status = 'pending' AND a.domain = $1
+             ORDER BY a.created_at DESC
+             LIMIT $2 OFFSET $3"
+        )
+        .bind(domain)
+        .bind(limit)
+        .bind(offset)
+    } else {
+        sqlx::query(
+            "SELECT a.atom_id, a.type, a.domain, a.statement, a.author_agent_id, a.created_at, a.review_status,
+                    CASE WHEN ag.reliability >= 0.8 AND ag.atoms_published >= 5 THEN true ELSE false END as auto_review_eligible
+             FROM atoms a
+             JOIN agents ag ON a.author_agent_id = ag.agent_id
+             WHERE a.review_status = 'pending'
+             ORDER BY a.created_at DESC
+             LIMIT $1 OFFSET $2"
+        )
+        .bind(limit)
+        .bind(offset)
+    };
+
+    let rows = query
+        .fetch_all(pool)
+        .await?;
+
+    rows.into_iter()
+        .map(|row| {
+            Ok(ReviewQueueItem {
+                atom_id: row.get("atom_id"),
+                atom_type: row.get("type"),
+                domain: row.get("domain"),
+                statement: row.get("statement"),
+                author_agent_id: row.get("author_agent_id"),
+                created_at: row.get("created_at"),
+                review_status: row.get("review_status"),
+                auto_review_eligible: row.get("auto_review_eligible"),
+            })
+        })
+        .collect()
+}
+
+/// Get total count of pending review items
+pub async fn get_review_queue_count(
+    pool: &PgPool,
+    domain_filter: Option<&str>,
+) -> Result<i64> {
+    let count: i64 = if let Some(domain) = domain_filter {
+        sqlx::query_scalar(
+            "SELECT COUNT(*) 
+             FROM atoms a
+             WHERE a.review_status = 'pending' AND a.domain = $1"
+        )
+        .bind(domain)
+        .fetch_one(pool)
+        .await?
+    } else {
+        sqlx::query_scalar(
+            "SELECT COUNT(*) 
+             FROM atoms a
+             WHERE a.review_status = 'pending'"
+        )
+        .fetch_one(pool)
+        .await?
+    };
+    
+    Ok(count)
+}
+
+#[derive(Debug)]
+pub struct ReviewRecord {
+    pub review_id: String,
+    pub atom_id: String,
+    pub reviewer_agent_id: String,
+    pub decision: String,
+    pub reason: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Create a review record and update atom status
+pub async fn create_review(
+    pool: &PgPool,
+    atom_id: &str,
+    reviewer_agent_id: &str,
+    decision: &str,
+    reason: Option<&str>,
+) -> Result<String> {
+    let review_id = uuid::Uuid::new_v4().to_string();
+    
+    // Insert review record
+    sqlx::query(
+        "INSERT INTO reviews (review_id, atom_id, reviewer_agent_id, decision, reason) 
+         VALUES ($1, $2, $3, $4, $5)"
+    )
+    .bind(&review_id)
+    .bind(atom_id)
+    .bind(reviewer_agent_id)
+    .bind(decision)
+    .bind(reason)
+    .execute(pool)
+    .await?;
+    
+    // Update atom review status
+    let new_status = match decision {
+        "approve" => "approved",
+        "reject" => "rejected",
+        "auto_approve" => "auto_approved",
+        _ => return Err(MoteError::Validation("Invalid decision".to_string())),
+    };
+    
+    sqlx::query("UPDATE atoms SET review_status = $1 WHERE atom_id = $2")
+        .bind(new_status)
+        .bind(atom_id)
+        .execute(pool)
+        .await?;
+    
+    // Update agent reliability based on review outcome
+    update_agent_reliability_from_review(pool, reviewer_agent_id, atom_id, decision).await?;
+    
+    Ok(review_id)
+}
+
+/// Update agent reliability based on review decisions
+async fn update_agent_reliability_from_review(
+    pool: &PgPool,
+    _reviewer_agent_id: &str,
+    atom_id: &str,
+    decision: &str,
+) -> Result<()> {
+    // Get atom author and current reliability
+    let row = sqlx::query(
+        "SELECT a.author_agent_id, ag.reliability, ag.atoms_published 
+         FROM atoms a
+         JOIN agents ag ON a.author_agent_id = ag.agent_id
+         WHERE a.atom_id = $1"
+    )
+    .bind(atom_id)
+    .fetch_one(pool)
+    .await?;
+    
+    let author_agent_id: String = row.get("author_agent_id");
+    let current_reliability: Option<f64> = row.get("reliability");
+    let atoms_published: i32 = row.get("atoms_published");
+    
+    // Initialize reliability if null
+    let current_reliability = current_reliability.unwrap_or(0.5);
+    
+    // Only update reliability if the agent has sufficient publications
+    if atoms_published >= 3 {
+        let reliability_change = match decision {
+            "approve" => 0.05,   // Positive reviews increase reliability
+            "reject" => -0.1,   // Rejections decrease reliability more
+            _ => 0.0,
+        };
+        
+        let new_reliability = (current_reliability + reliability_change).clamp(0.0, 1.0);
+        
+        sqlx::query("UPDATE agents SET reliability = $1 WHERE agent_id = $2")
+            .bind(new_reliability)
+            .bind(&author_agent_id)
+            .execute(pool)
+            .await?;
+    }
+    
+    Ok(())
+}
+
+/// Get review history for an atom
+pub async fn get_atom_reviews(
+    pool: &PgPool,
+    atom_id: &str,
+) -> Result<Vec<ReviewRecord>> {
+    let rows = sqlx::query(
+        "SELECT review_id, atom_id, reviewer_agent_id, decision, reason, created_at
+         FROM reviews
+         WHERE atom_id = $1
+         ORDER BY created_at DESC"
+    )
+    .bind(atom_id)
+    .fetch_all(pool)
+    .await?;
+
+    rows.into_iter()
+        .map(|row| {
+            Ok(ReviewRecord {
+                review_id: row.get("review_id"),
+                atom_id: row.get("atom_id"),
+                reviewer_agent_id: row.get("review_agent_id"),
+                decision: row.get("decision"),
+                reason: row.get("reason"),
+                created_at: row.get("created_at"),
+            })
+        })
+        .collect()
+}
+
+// Claim conflict detection functions
+
+#[derive(Debug)]
+pub struct ClaimConflict {
+    pub claim_id: String,
+    pub agent_id: String,
+    pub hypothesis: String,
+    pub conditions: serde_json::Value,
+    pub similarity_score: f64,
+    pub conflict_type: String, // "similar_hypothesis", "overlapping_conditions", "competing_direction"
+}
+
+/// Find potential claim conflicts based on hypothesis similarity and condition overlap
+pub async fn find_potential_claim_conflicts(
+    pool: &PgPool,
+    domain: &str,
+    hypothesis: &str,
+    conditions: &serde_json::Value,
+) -> Result<Vec<ClaimConflict>> {
+    let mut conflicts = Vec::new();
+    
+    // Get existing claims in the same domain
+    let rows = sqlx::query(
+        "SELECT c.claim_id, c.agent_id, a.statement, a.conditions
+         FROM claims c
+         JOIN atoms a ON a.atom_id = c.atom_id
+         WHERE c.active = true AND a.domain = $1 AND a.atom_id != c.atom_id"
+    )
+    .bind(domain)
+    .fetch_all(pool)
+    .await?;
+    
+    for row in rows {
+        let existing_hypothesis: String = row.get("statement");
+        let existing_conditions: serde_json::Value = row.get("conditions");
+        
+        // Calculate simple text similarity for hypotheses
+        let similarity = calculate_text_similarity(hypothesis, &existing_hypothesis);
+        
+        // Check for condition overlap
+        let condition_overlap = calculate_condition_overlap(conditions, &existing_conditions);
+        
+        // Determine conflict type and severity
+        let (conflict_type, should_include) = if similarity > 0.8 {
+            ("similar_hypothesis", true)
+        } else if condition_overlap > 0.7 {
+            ("overlapping_conditions", true)
+        } else if similarity > 0.5 && condition_overlap > 0.3 {
+            ("competing_direction", true)
+        } else {
+            ("", false)
+        };
+        
+        if should_include {
+            conflicts.push(ClaimConflict {
+                claim_id: row.get("claim_id"),
+                agent_id: row.get("agent_id"),
+                hypothesis: existing_hypothesis,
+                conditions: existing_conditions,
+                similarity_score: similarity,
+                conflict_type: conflict_type.to_string(),
+            });
+        }
+    }
+    
+    Ok(conflicts)
+}
+
+/// Calculate claim density for a domain (claims per unit of research space)
+pub async fn calculate_claim_density(
+    pool: &PgPool,
+    domain: &str,
+) -> Result<f64> {
+    // Count active claims in domain
+    let claim_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) 
+         FROM claims c
+         JOIN atoms a ON a.atom_id = c.atom_id
+         WHERE c.active = true AND a.domain = $1"
+    )
+    .bind(domain)
+    .fetch_one(pool)
+    .await?;
+    
+    // Count total atoms in domain for normalization
+    let atom_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) 
+         FROM atoms 
+         WHERE domain = $1 AND NOT retracted"
+    )
+    .bind(domain)
+    .fetch_one(pool)
+    .await?;
+    
+    // Calculate density (claims per atom, capped at 1.0)
+    let density = if atom_count > 0 {
+        (claim_count as f64) / (atom_count as f64)
+    } else {
+        0.0
+    }.min(1.0);
+    
+    Ok(density)
+}
+
+/// Simple text similarity calculation (Jaccard-like)
+fn calculate_text_similarity(text1: &str, text2: &str) -> f64 {
+    let words1: std::collections::HashSet<&str> = text1.split_whitespace().collect();
+    let words2: std::collections::HashSet<&str> = text2.split_whitespace().collect();
+    
+    if words1.is_empty() && words2.is_empty() {
+        return 1.0;
+    }
+    
+    if words1.is_empty() || words2.is_empty() {
+        return 0.0;
+    }
+    
+    let intersection = words1.intersection(&words2).count();
+    let union = words1.union(&words2).count();
+    
+    intersection as f64 / union as f64
+}
+
+/// Calculate condition overlap between two condition objects
+fn calculate_condition_overlap(cond1: &serde_json::Value, cond2: &serde_json::Value) -> f64 {
+    if !cond1.is_object() || !cond2.is_object() {
+        return 0.0;
+    }
+    
+    let obj1 = cond1.as_object().unwrap();
+    let obj2 = cond2.as_object().unwrap();
+    
+    if obj1.is_empty() && obj2.is_empty() {
+        return 1.0;
+    }
+    
+    if obj1.is_empty() || obj2.is_empty() {
+        return 0.0;
+    }
+    
+    let mut overlap_count = 0;
+    let mut total_keys = 0;
+    
+    for (key, value1) in obj1 {
+        total_keys += 1;
+        if let Some(value2) = obj2.get(key) {
+            if value1 == value2 {
+                overlap_count += 1;
+            }
+        }
+    }
+    
+    // Also check keys in obj2 that aren't in obj1
+    for key in obj2.keys() {
+        if !obj1.contains_key(key) {
+            total_keys += 1;
+        }
+    }
+    
+    if total_keys == 0 {
+        0.0
+    } else {
+        overlap_count as f64 / total_keys as f64
+    }
+}
+
+// Graph traversal functions
+
+#[derive(Debug, Default)]
+pub struct GraphTraversalInfo {
+    pub hops_explored: u32,
+    pub connected_atoms: Vec<String>,
+    pub edge_types_found: Vec<String>,
+    pub paths: Vec<Vec<String>>, // Each path is a sequence of atom_ids
+}
+
+/// Get graph traversal information for a set of atoms
+pub async fn get_graph_traversal_info(
+    pool: &PgPool,
+    atom_ids: &[String],
+    max_hops: u32,
+    edge_types_filter: Option<&[String]>,
+) -> Result<GraphTraversalInfo> {
+    let mut connected_atoms = Vec::new();
+    let mut edge_types_found = std::collections::HashSet::new();
+    let mut paths = Vec::new();
+    
+    // Build edge type filter clause
+    let edge_type_clause = if let Some(filter) = edge_types_filter {
+        let placeholders: Vec<String> = filter.iter().map(|_| "?".to_string()).collect();
+        format!("AND e.type IN ({})", placeholders.join(","))
+    } else {
+        String::new()
+    };
+    
+    // Find connected atoms within max_hops
+    for atom_id in atom_ids {
+        let query = format!(
+            "WITH RECURSIVE connected_atoms(atom_id, hop, path) AS (
+                SELECT target_id, 1, ARRAY[target_id] 
+                FROM edges 
+                WHERE source_id = $1 {}
+                UNION ALL
+                SELECT e.target_id, ca.hop + 1, ca.path || e.target_id
+                FROM edges e
+                JOIN connected_atoms ca ON e.source_id = ca.atom_id
+                WHERE ca.hop < {}
+                AND NOT e.target_id = ANY(ca.path)
+                {}
+            )
+            SELECT DISTINCT atom_id, hop, path
+            FROM connected_atoms",
+            edge_type_clause, max_hops, edge_type_clause
+        );
+        
+        let mut query_builder = sqlx::query(&query).bind(atom_id);
+        
+        // Add edge type filter values if provided
+        if let Some(filter) = edge_types_filter {
+            for edge_type in filter {
+                query_builder = query_builder.bind(edge_type);
+            }
+        }
+        
+        let rows = query_builder
+            .fetch_all(pool)
+            .await?;
+        
+        for row in rows {
+            let connected_id: String = row.get("atom_id");
+            let path: Vec<String> = row.get("path");
+            
+            if !connected_atoms.contains(&connected_id) {
+                connected_atoms.push(connected_id);
+            }
+            
+            if !paths.contains(&path) {
+                paths.push(path);
+            }
+        }
+    }
+    
+    // Get edge types found
+    let edge_query = if let Some(filter) = edge_types_filter {
+        let placeholders: Vec<String> = filter.iter().map(|_| "?".to_string()).collect();
+        format!(
+            "SELECT DISTINCT type FROM edges 
+             WHERE (source_id = ANY($1) OR target_id = ANY($1))
+             AND type IN ({})",
+            placeholders.join(",")
+        )
+    } else {
+        "SELECT DISTINCT type FROM edges WHERE (source_id = ANY($1) OR target_id = ANY($1))".to_string()
+    };
+    
+    let mut edge_query_builder = sqlx::query(&edge_query).bind(&connected_atoms);
+    
+    if let Some(filter) = edge_types_filter {
+        for edge_type in filter {
+            edge_query_builder = edge_query_builder.bind(edge_type);
+        }
+    }
+    
+    let edge_rows = edge_query_builder
+        .fetch_all(pool)
+        .await?;
+    
+    for row in edge_rows {
+        let edge_type: String = row.get("type");
+        edge_types_found.insert(edge_type);
+    }
+    
+    Ok(GraphTraversalInfo {
+        hops_explored: max_hops,
+        connected_atoms,
+        edge_types_found: edge_types_found.into_iter().collect(),
+        paths,
+    })
+}

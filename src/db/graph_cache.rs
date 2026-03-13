@@ -45,6 +45,7 @@ impl EdgeType {
 pub struct GraphCache {
     pub graph: DiGraph<String, EdgeType>,
     node_indices: HashMap<String, NodeIndex>,
+    cluster_cache: HashMap<String, serde_json::Value>, // Cache for cluster query results
 }
 
 impl Default for GraphCache {
@@ -58,11 +59,16 @@ impl GraphCache {
         Self {
             node_indices: HashMap::new(),
             graph: DiGraph::new(),
+            cluster_cache: HashMap::new(),
         }
     }
 
     pub async fn load_from_database(pool: &sqlx::PgPool) -> Result<Self> {
-        let mut cache = Self::new();
+        let mut cache = Self {
+            node_indices: HashMap::new(),
+            graph: DiGraph::new(),
+            cluster_cache: HashMap::new(),
+        };
         
         // Load all atoms
         let atom_rows = sqlx::query("SELECT atom_id FROM atoms WHERE NOT retracted AND NOT archived")
@@ -214,6 +220,31 @@ impl GraphCache {
 
     pub fn edge_count(&self) -> usize {
         self.graph.edge_count()
+    }
+
+    // Cluster result caching methods
+    pub fn get_cluster_result(&self, cache_key: &str) -> Option<serde_json::Value> {
+        self.cluster_cache.get(cache_key).cloned()
+    }
+
+    pub fn set_cluster_result(&mut self, cache_key: String, result: serde_json::Value) {
+        // Simple cache eviction: keep only last 100 entries
+        if self.cluster_cache.len() >= 100 {
+            // Remove oldest entries (simple FIFO)
+            let keys_to_remove: Vec<String> = self.cluster_cache.keys()
+                .take(10)
+                .cloned()
+                .collect();
+            for key in keys_to_remove {
+                self.cluster_cache.remove(&key);
+            }
+        }
+        
+        self.cluster_cache.insert(cache_key, result);
+    }
+
+    pub fn clear_cluster_cache(&mut self) {
+        self.cluster_cache.clear();
     }
 }
 

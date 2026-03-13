@@ -104,7 +104,8 @@ pub struct AtomInput {
     pub metrics: Option<serde_json::Value>,
     pub provenance: serde_json::Value,
     pub signature: Vec<u8>,
-    pub artifact_tree_hash: Option<String>,
+    pub artifact_tree_hash: Option<String>, // Keep for backward compatibility
+    pub artifact_inline: Option<crate::api::artifact_processor::InlineArtifact>, // New inline support
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

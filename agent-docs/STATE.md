@@ -78,20 +78,25 @@ This document reports the current implementation status relative to the MANIFEST
 ## 🚧 **PARTIALLY IMPLEMENTED**
 
 ### **Claim Mechanics**
-- ⚠️ **claim_direction**: Stub implementation (returns "not yet implemented")
 - ✅ **Claims Table**: Database schema exists
-- ⚠️ **Expiry Logic**: Claims expire but conflict detection incomplete
-- ⚠️ **Neighbourhood Reporting**: Not fully implemented
+- ✅ **Expiry Logic**: Claims expire with automatic cleanup
+- ✅ **Conflict Detection**: Advanced similarity-based conflict detection
+- ✅ **Neighbourhood Reporting**: Enhanced with claim density and conflict warnings
+- ✅ **Claim Density**: Real-time claim density calculation and reporting
 
 ### **Query Cluster**
-- ⚠️ **query_cluster**: Stub implementation (returns "not yet implemented")
-- ✅ **Graph Cache**: In-memory tracking exists
-- ⚠️ **Traversal Queries**: Graph traversal queries not implemented
+- ✅ **query_cluster**: Full implementation with vector similarity search
+- ✅ **Graph Cache**: Enhanced with cluster result caching
+- ✅ **Traversal Queries**: Multi-hop graph traversal with edge-type filtering
+- ✅ **Performance Optimization**: Result caching and pagination
+- ✅ **Advanced Features**: Edge constraints and path tracking
 
 ### **Review Queue**
-- ⚠️ **Review State**: No dedicated review state table
-- ⚠️ **Persistence**: Review decisions not persisted
-- ✅ **Basic Review**: `review_atom` accepts approve/reject but no effects
+- ✅ **Review State**: Complete `reviews` table with audit trail
+- ✅ **Persistence**: Review decisions fully persisted with agent reliability updates
+- ✅ **Review Workflow**: End-to-end review pipeline with domain filtering and pagination
+- ✅ **Integration**: Acceptance pipeline integrated with review decisions
+- ✅ **Conflict Detection**: Advanced claim conflict detection and density reporting
 
 ---
 

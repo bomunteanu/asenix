@@ -309,6 +309,84 @@ pub fn get_all_tools() -> ToolsListResult {
                 "required": ["vector", "radius"]
             }),
         },
+        Tool {
+            name: "download_artifact".to_string(),
+            description: "Download an artifact by hash. Returns metadata and base64-encoded content.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "hash": {
+                        "type": "string",
+                        "description": "Artifact hash to download"
+                    },
+                    "encoding": {
+                        "type": "string",
+                        "enum": ["base64", "raw"],
+                        "description": "Content encoding (default: base64)"
+                    }
+                },
+                "required": ["hash"]
+            }),
+        },
+        Tool {
+            name: "get_artifact_metadata".to_string(),
+            description: "Get metadata for an artifact without downloading the content.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "hash": {
+                        "type": "string",
+                        "description": "Artifact hash"
+                    }
+                },
+                "required": ["hash"]
+            }),
+        },
+        Tool {
+            name: "list_artifacts".to_string(),
+            description: "List artifacts with optional filtering by type, uploader, and limit.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "artifact_type": {
+                        "type": "string",
+                        "enum": ["blob", "tree"],
+                        "description": "Filter by artifact type"
+                    },
+                    "uploaded_by": {
+                        "type": "string",
+                        "description": "Filter by uploader agent ID"
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "description": "Maximum number of results to return"
+                    }
+                },
+                "required": []
+            }),
+        },
+        Tool {
+            name: "delete_artifact".to_string(),
+            description: "Delete an artifact. Only works for artifacts you uploaded and that are not referenced by atoms.".to_string(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "hash": {
+                        "type": "string",
+                        "description": "Artifact hash to delete"
+                    },
+                    "agent_id": {
+                        "type": "string",
+                        "description": "Your agent ID"
+                    },
+                    "api_token": {
+                        "type": "string",
+                        "description": "Your API token"
+                    }
+                },
+                "required": ["hash", "agent_id", "api_token"]
+            }),
+        },
     ];
 
     ToolsListResult { tools }

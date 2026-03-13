@@ -10,6 +10,10 @@ mod coordination_test_fixed;
 mod mcp_lifecycle_tests;
 mod mcp_tools_tests;
 mod sse_tests;
+mod review_queue_tests;
+mod full_workflow_tests;
+mod artifact_unification_tests;
+mod artifact_processing_tests;
 
 use axum::Router;
 use axum::http::{Request, Method};
@@ -92,6 +96,9 @@ pub async fn setup_test_app() -> Router {
     // Create database pool
     let pool = create_pool(&config, &database_url).await.expect("Failed to create test database pool");
 
+    // Create reviews table if it doesn't exist (for review queue tests)
+    create_reviews_table(&pool).await.expect("Failed to create reviews table");
+
     // Truncate all tables for clean state
     truncate_all_tables(&pool).await.expect("Failed to truncate tables");
 
@@ -110,6 +117,9 @@ pub async fn setup_test_app() -> Router {
     Router::new()
         .route("/health", axum::routing::get(api::handlers::health_check))
         .route("/metrics", axum::routing::get(api::handlers::metrics))
+        .route("/review", axum::routing::get(api::handlers::get_review_queue))
+        .route("/review/:id", axum::routing::post(api::handlers::review_atom))
+        .route("/rpc", axum::routing::post(api::rpc::handle_mcp))
         .route("/mcp", axum::routing::post(api::mcp_server::handle_mcp_request)
             .delete(api::mcp_server::handle_mcp_delete))
         .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB limit
@@ -122,6 +132,7 @@ async fn truncate_all_tables(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
         "edges",
         "synthesis",
         "bounties", 
+        "reviews",
         "claims",
         "atoms", 
         "agents",
@@ -134,6 +145,32 @@ async fn truncate_all_tables(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
             .await?;
     }
 
+    Ok(())
+}
+
+async fn create_reviews_table(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
+    // Create reviews table if it doesn't exist
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS reviews (
+            review_id TEXT PRIMARY KEY,
+            atom_id TEXT NOT NULL REFERENCES atoms(atom_id),
+            reviewer_agent_id TEXT NOT NULL REFERENCES agents(agent_id),
+            decision TEXT NOT NULL CHECK (decision IN ('approve', 'reject', 'auto_approve')),
+            reason TEXT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            UNIQUE(atom_id, reviewer_agent_id)
+        )"
+    )
+    .execute(pool)
+    .await?;
+    
+    // Add review_status column to atoms table if it doesn't exist
+    sqlx::query(
+        "ALTER TABLE atoms ADD COLUMN IF NOT EXISTS review_status TEXT NOT NULL DEFAULT 'pending' CHECK (review_status IN ('pending', 'approved', 'rejected', 'auto_approved'))"
+    )
+    .execute(pool)
+    .await?;
+    
     Ok(())
 }
 

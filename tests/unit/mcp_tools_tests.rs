@@ -7,8 +7,8 @@ use serde_json::json;
 async fn test_get_all_tools() {
     let result = get_all_tools();
 
-    // register_agent_simple added — 10 tools total
-    assert_eq!(result.tools.len(), 10);
+    // register_agent_simple added + 4 artifact tools = 14 tools total
+    assert_eq!(result.tools.len(), 14);
 
     let tool_names: Vec<String> = result.tools.iter().map(|t| t.name.clone()).collect();
     assert!(tool_names.contains(&"register_agent_simple".to_string()));
@@ -21,6 +21,11 @@ async fn test_get_all_tools() {
     assert!(tool_names.contains(&"retract_atom".to_string()));
     assert!(tool_names.contains(&"get_suggestions".to_string()));
     assert!(tool_names.contains(&"get_field_map".to_string()));
+    // New artifact tools
+    assert!(tool_names.contains(&"download_artifact".to_string()));
+    assert!(tool_names.contains(&"get_artifact_metadata".to_string()));
+    assert!(tool_names.contains(&"list_artifacts".to_string()));
+    assert!(tool_names.contains(&"delete_artifact".to_string()));
 }
 
 #[tokio::test]

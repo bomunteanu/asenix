@@ -83,6 +83,19 @@ impl StorageBackend for LocalStorage {
     fn base_path(&self) -> &PathBuf {
         &self.base_path
     }
+
+    async fn delete(&self, hash: &str) -> Result<(), StorageError> {
+        let file_path = self.get_file_path(hash);
+        
+        // Try to remove the file
+        match fs::remove_file(&file_path).await {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                Err(StorageError::NotFound(hash.to_string()))
+            }
+            Err(e) => Err(StorageError::Io(e)),
+        }
+    }
 }
 
 #[cfg(test)]

@@ -34,6 +34,9 @@ pub enum MoteError {
     
     #[error("Cryptography error: {0}")]
     Cryptography(String),
+    
+    #[error("Storage error: {0}")]
+    Storage(String),
 }
 
 impl MoteError {
@@ -50,6 +53,7 @@ impl MoteError {
             MoteError::Serialization(_) => -32603,
             MoteError::Configuration(_) => -32000,
             MoteError::Cryptography(_) => -32000,
+            MoteError::Storage(_) => -32000,
         }
     }
 }

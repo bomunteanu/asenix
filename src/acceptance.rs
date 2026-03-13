@@ -56,6 +56,12 @@ impl AcceptancePipeline {
             priority: 100, // Lower priority
         });
         
+        rules.insert("review_status".to_string(), AcceptanceRule {
+            name: "review_status".to_string(),
+            enabled: true,
+            priority: 50, // Lowest priority - only after all other checks pass
+        });
+        
         Self { rules }
     }
     
@@ -85,6 +91,7 @@ impl AcceptancePipeline {
             "required_fields" => self.check_required_fields(atom_input),
             "domain_validation" => self.check_domain_validation(atom_input),
             "atom_type_limits" => self.check_atom_type_limits(atom_input),
+            "review_status" => self.check_review_status(atom_input),
             _ => AcceptanceDecision::Accept,
         }
     }
@@ -173,6 +180,13 @@ impl AcceptancePipeline {
     pub fn list_rules(&self) -> Vec<&AcceptanceRule> {
         self.rules.values().collect()
     }
+    
+    fn check_review_status(&self, _atom_input: &AtomInput) -> AcceptanceDecision {
+        // Note: This rule would typically check against a database for existing review status
+        // For now, we'll accept all atoms since review status is handled at publication time
+        // The actual review status check happens in the publish_atoms handler
+        AcceptanceDecision::Accept
+    }
 }
 
 #[cfg(test)]
@@ -194,6 +208,7 @@ mod tests {
             provenance: json!({}),
             signature: vec![1, 2, 3],
             artifact_tree_hash: None,
+            artifact_inline: None,
         };
         
         match pipeline.evaluate_atom(&short_atom) {
@@ -211,6 +226,7 @@ mod tests {
             provenance: json!({}),
             signature: vec![1, 2, 3],
             artifact_tree_hash: None,
+            artifact_inline: None,
         };
         
         match pipeline.evaluate_atom(&valid_atom) {

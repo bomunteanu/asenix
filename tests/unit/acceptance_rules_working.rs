@@ -19,6 +19,7 @@ async fn test_acceptance_pipeline_statement_length_validation() {
         provenance: json!({}),
         signature: vec![1, 2, 3],
         artifact_tree_hash: None,
+            artifact_inline: None,
     };
     
     match pipeline.evaluate_atom(&short_atom) {
@@ -38,6 +39,7 @@ async fn test_acceptance_pipeline_statement_length_validation() {
         provenance: json!({}),
         signature: vec![1, 2, 3],
         artifact_tree_hash: None,
+            artifact_inline: None,
     };
     
     match pipeline.evaluate_atom(&long_atom) {
@@ -57,6 +59,7 @@ async fn test_acceptance_pipeline_statement_length_validation() {
         provenance: json!({}),
         signature: vec![1, 2, 3],
         artifact_tree_hash: None,
+            artifact_inline: None,
     };
     
     match pipeline.evaluate_atom(&valid_length_atom) {
@@ -79,6 +82,7 @@ async fn test_acceptance_pipeline_required_fields_validation() {
         provenance: json!({}),
         signature: vec![1, 2, 3],
         artifact_tree_hash: None,
+            artifact_inline: None,
     };
     
     match pipeline.evaluate_atom(&no_domain_atom) {
@@ -98,6 +102,7 @@ async fn test_acceptance_pipeline_required_fields_validation() {
         provenance: json!({}),
         signature: vec![],
         artifact_tree_hash: None,
+            artifact_inline: None,
     };
     
     match pipeline.evaluate_atom(&no_statement_atom) {
@@ -118,6 +123,7 @@ async fn test_acceptance_pipeline_required_fields_validation() {
         provenance: json!({}),
         signature: vec![],
         artifact_tree_hash: None,
+            artifact_inline: None,
     };
     
     match pipeline.evaluate_atom(&no_signature_atom) {
@@ -142,6 +148,7 @@ async fn test_acceptance_pipeline_domain_validation() {
         provenance: json!({}),
         signature: vec![1, 2, 3],
         artifact_tree_hash: None,
+            artifact_inline: None,
     };
     
     match pipeline.evaluate_atom(&invalid_domain_atom) {
@@ -161,6 +168,7 @@ async fn test_acceptance_pipeline_domain_validation() {
         provenance: json!({}),
         signature: vec![1, 2, 3],
         artifact_tree_hash: None,
+            artifact_inline: None,
     };
     
     match pipeline.evaluate_atom(&long_domain_atom) {
@@ -180,6 +188,7 @@ async fn test_acceptance_pipeline_domain_validation() {
         provenance: json!({}),
         signature: vec![1, 2, 3],
         artifact_tree_hash: None,
+            artifact_inline: None,
     };
     
     match pipeline.evaluate_atom(&valid_domain_atom) {
@@ -202,6 +211,7 @@ async fn test_acceptance_pipeline_atom_type_limits() {
         provenance: json!({}),
         signature: vec![1, 2, 3],
         artifact_tree_hash: None,
+            artifact_inline: None,
     };
     
     match pipeline.evaluate_atom(&hypothesis_no_conditions) {
@@ -221,6 +231,7 @@ async fn test_acceptance_pipeline_atom_type_limits() {
         provenance: json!({}),
         signature: vec![1, 2, 3],
         artifact_tree_hash: None,
+            artifact_inline: None,
     };
     
     match pipeline.evaluate_atom(&finding_no_metrics) {
@@ -240,6 +251,7 @@ async fn test_acceptance_pipeline_atom_type_limits() {
         provenance: json!({}),
         signature: vec![1, 2, 3],
         artifact_tree_hash: None,
+            artifact_inline: None,
     };
     
     match pipeline.evaluate_atom(&valid_hypothesis) {
@@ -257,6 +269,7 @@ async fn test_acceptance_pipeline_atom_type_limits() {
         provenance: json!({}),
         signature: vec![1, 2, 3],
         artifact_tree_hash: None,
+            artifact_inline: None,
     };
     
     match pipeline.evaluate_atom(&valid_finding) {
@@ -291,6 +304,7 @@ async fn test_acceptance_pipeline_complete_flow() {
         }),
         signature: vec![1, 2, 3, 4, 5],
         artifact_tree_hash: None,
+            artifact_inline: None,
     };
     
     match pipeline.evaluate_atom(&valid_atom) {

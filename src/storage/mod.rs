@@ -22,6 +22,9 @@ pub trait StorageBackend: Send + Sync {
     /// Check if hash exists
     async fn exists(&self, hash: &str) -> Result<bool, StorageError>;
     
+    /// Delete bytes by hash
+    async fn delete(&self, hash: &str) -> Result<(), StorageError>;
+    
     /// Get the base storage path
     fn base_path(&self) -> &PathBuf;
 }
