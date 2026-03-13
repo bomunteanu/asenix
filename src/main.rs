@@ -1,0 +1,168 @@
+use axum::extract::DefaultBodyLimit;
+use axum::routing::{get, post};
+use axum::Router;
+use clap::Parser;
+use std::path::PathBuf;
+use std::time::Duration;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tracing;
+
+mod api;
+mod config;
+mod crypto;
+mod db;
+mod domain;
+mod embedding;
+mod error;
+mod state;
+mod workers;
+mod acceptance;
+
+#[derive(Parser)]
+#[command(name = "mote")]
+#[command(about = "Mote coordination hub for asynchronous AI research agents")]
+struct Args {
+    #[arg(short, long, default_value = "config.toml")]
+    config: PathBuf,
+}
+
+#[tokio::main]
+async fn main() -> anyhow::Result<()> {
+    let args = Args::parse();
+
+    // Initialize tracing
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "mote=debug,tower_http=debug,axum=debug".into()),
+        )
+        .with(tracing_subscriber::fmt::layer())
+        .init();
+
+    // Load configuration
+    let config = config::Config::load_from_file(&args.config)?;
+    config.validate()?;
+    let config = std::sync::Arc::new(config);
+
+    // Get database URL from environment or use default
+    let database_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://mote:mote_password@localhost:5432/mote".to_string());
+
+    // Create database connection pool
+    let pool = db::pool::create_pool(&config, &database_url).await?;
+
+    // Run migrations
+    sqlx::migrate!("./migrations").run(&pool).await?;
+
+    // Create application state
+    let (embedding_queue_tx, _embedding_queue_rx) = tokio::sync::mpsc::channel(1000);
+    let (sse_broadcast_tx, _) = tokio::sync::broadcast::channel(1000);
+    
+    let state = state::AppState::new(pool, config.clone(), embedding_queue_tx.clone(), sse_broadcast_tx)
+        .await?;
+
+    // Start background workers
+    let embedding_worker = workers::embedding_queue::EmbeddingQueue::new(
+        state.pool.clone(),
+        (*state.config).clone(),
+        state.graph_cache.clone(),
+        state.condition_registry.clone(),
+    );
+    
+    let claims_worker = workers::claims::ClaimsExpiryWorker::new(state.pool.clone());
+    let staleness_worker = workers::staleness::StalenessWorker::new(
+        state.pool.clone(),
+        state.config.hub.neighbourhood_radius,
+    );
+
+    // Spawn workers
+    let embedding_handle = tokio::spawn(async move {
+        embedding_worker.start().await;
+    });
+    let claims_handle = tokio::spawn(claims_worker.start());
+    let staleness_handle = tokio::spawn(staleness_worker.start(10)); // 10 minute interval
+
+    // Build router
+    let app = Router::new()
+        .route("/health", get(api::handlers::health_check))
+        .route("/metrics", get(api::handlers::metrics))
+        .route("/review", get(api::handlers::get_review_queue))
+        .route("/review/:id", post(api::handlers::review_atom))
+        .route("/events", get(api::sse::sse_events))
+        .route("/mcp", post(api::mcp::handle_mcp))
+        .layer(DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB limit
+        .with_state(std::sync::Arc::new(state.clone()));
+
+    // Start server
+    let listener = tokio::net::TcpListener::bind(&config.hub.listen_address).await?;
+    tracing::info!("Mote server listening on {}", config.hub.listen_address);
+
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal(
+            embedding_queue_tx,
+            embedding_handle,
+            claims_handle,
+            staleness_handle,
+        ))
+        .await?;
+
+    tracing::info!("Clean shutdown completed");
+    Ok(())
+}
+
+async fn shutdown_signal(
+    embedding_queue_tx: tokio::sync::mpsc::Sender<String>,
+    mut embedding_handle: tokio::task::JoinHandle<()>,
+    claims_handle: tokio::task::JoinHandle<()>,
+    staleness_handle: tokio::task::JoinHandle<()>,
+) {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("failed to install Ctrl+C handler");
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install signal handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+
+    tracing::info!("Shutdown signal received, starting graceful shutdown");
+
+    // Step 1: Stop accepting new connections (handled by axum's graceful shutdown)
+    
+    // Step 2: Close embedding queue sender to stop processing new atoms
+    drop(embedding_queue_tx);
+    tracing::info!("Closed embedding queue sender");
+
+    // Step 3: Wait for embedding worker to finish with timeout
+    tracing::info!("Waiting for embedding worker to finish...");
+    match tokio::time::timeout(Duration::from_secs(30), &mut embedding_handle).await {
+        Ok(Ok(())) => tracing::info!("Embedding worker finished gracefully"),
+        Ok(Err(e)) => tracing::error!("Embedding worker panicked: {}", e),
+        Err(_) => {
+            tracing::warn!("Embedding worker did not finish within timeout");
+            // Force cancel
+            embedding_handle.abort();
+        }
+    }
+
+    // Step 4: Cancel background workers
+    tracing::info!("Cancelling background workers...");
+    claims_handle.abort();
+    staleness_handle.abort();
+
+    // Step 5: Close database pool (handled by Drop implementation)
+    tracing::info!("Graceful shutdown sequence completed");
+}

@@ -1,0 +1,32 @@
+[hub]
+name = "test-hub"
+domain = "test.mote"
+listen_address = "127.0.0.1:8080"
+embedding_endpoint = "http://localhost:11434"
+embedding_model = "nomic-embed-text"
+embedding_dimension = 0
+structured_vector_reserved_dims = 10
+dims_per_numeric_key = 2
+dims_per_categorical_key = 1
+neighbourhood_radius = 0.1
+
+[pheromone]
+decay_half_life_hours = 24
+attraction_cap = 10.0
+novelty_radius = 0.5
+disagreement_threshold = 0.8
+
+[trust]
+reliability_threshold = 0.7
+independence_ancestry_depth = 5
+probation_atom_count = 10
+max_atoms_per_hour = 100
+
+[workers]
+embedding_pool_size = 4
+decay_interval_minutes = 60
+claim_ttl_hours = 168
+staleness_check_interval_minutes = 30
+
+[acceptance]
+required_provenance_fields = ["agent_id", "timestamp"]
