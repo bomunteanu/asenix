@@ -25,9 +25,3 @@ pub struct AgentConfirmation {
     pub agent_id: String,
     pub signature: String, // hex-encoded signature of challenge
 }
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AgentRegistrationResponse {
-    pub agent_id: String,
-    pub challenge: String, // hex-encoded challenge
-}

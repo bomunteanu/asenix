@@ -13,6 +13,12 @@ pub struct RateLimiter {
     inner: Arc<Mutex<HashMap<String, (usize, Instant)>>>,
 }
 
+impl Default for RateLimiter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RateLimiter {
     pub fn new() -> Self {
         Self {

@@ -30,6 +30,15 @@ pub async fn setup_test_app() -> Router {
             }
         });
     
+    let pool = sqlx::PgPool::connect(&database_url)
+        .await
+        .expect("Failed to connect to database");
+
+    // Clean up database before each test
+    if let Err(e) = truncate_all_tables(&pool).await {
+        eprintln!("Warning: Failed to cleanup database: {}", e);
+    }
+    
     let config = Config {
         hub: mote::config::HubConfig {
             name: "test-hub".to_string(),

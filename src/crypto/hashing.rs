@@ -1,4 +1,3 @@
-use crate::error::{MoteError, Result};
 use blake3::Hasher;
 use serde_json;
 

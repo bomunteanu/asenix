@@ -18,19 +18,6 @@ pub enum ValueType {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConditionValue {
-    pub value_type: ValueType,
-    pub value: serde_json::Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConditionPredicate {
-    pub key: String,
-    pub operator: ConditionOperator,
-    pub value: serde_json::Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ConditionOperator {
     Equals,
     NotEquals,
@@ -40,6 +27,12 @@ pub enum ConditionOperator {
     LessThanOrEqual,
     Contains,
     NotContains,
+}
+
+impl Default for ConditionRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl ConditionRegistry {

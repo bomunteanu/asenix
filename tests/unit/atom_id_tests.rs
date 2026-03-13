@@ -1,6 +1,5 @@
 use chrono::Utc;
 use mote::crypto::hashing::compute_atom_id;
-use mote::domain::atom::AtomType;
 use serde_json::json;
 
 #[test]

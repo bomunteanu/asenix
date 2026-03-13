@@ -1,5 +1,5 @@
 # Build stage
-FROM rust:1.75-slim as builder
+FROM rust:1.94-slim AS builder
 
 WORKDIR /app
 
@@ -10,8 +10,11 @@ RUN apt-get update && apt-get install -y \
     libpq-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy Cargo files
-COPY Cargo.toml Cargo.lock ./
+# Copy Cargo files (but not the lock file)
+COPY Cargo.toml ./
+
+# Generate a new lock file compatible with this Rust version
+RUN cargo update
 
 # Enable SQLX offline mode
 ENV SQLX_OFFLINE=true
@@ -28,7 +31,7 @@ COPY migrations ./migrations
 RUN cargo build --release
 
 # Runtime stage
-FROM debian:bookworm-slim
+FROM rust:1.94-slim
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \

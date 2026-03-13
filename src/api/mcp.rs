@@ -188,7 +188,7 @@ async fn authenticate_and_rate_limit(
     };
     
     let canonical_params = serde_json::to_string(&params_without_signature)
-        .map_err(|e| MoteError::Serialization(e))?;
+        .map_err(MoteError::Serialization)?;
     
     let signature_bytes = crate::crypto::signing::hex_to_bytes(&signature)?;
     let public_key_bytes = crate::crypto::signing::hex_to_bytes(&hex::encode(&agent.public_key))?;
@@ -200,8 +200,8 @@ async fn authenticate_and_rate_limit(
     )?;
 
     // Rate limiting
-    let request_count = if params["atoms"].is_array() {
-        params["atoms"].as_array().unwrap().len() as usize
+    let _request_count = if params["atoms"].is_array() {
+        params["atoms"].as_array().unwrap().len()
     } else {
         1
     };
@@ -420,7 +420,7 @@ async fn handle_get_suggestions(
         .bind(limit)
         .fetch_all(&state.pool)
         .await
-        .map_err(|e| MoteError::Database(e))?
+        .map_err(MoteError::Database)?
     } else {
         sqlx::query(
             "SELECT atom_id, type, domain, statement, conditions, metrics, 
@@ -434,7 +434,7 @@ async fn handle_get_suggestions(
         .bind(limit)
         .fetch_all(&state.pool)
         .await
-        .map_err(|e| MoteError::Database(e))?
+        .map_err(MoteError::Database)?
     };
     
     let mut suggestions = Vec::new();

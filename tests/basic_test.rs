@@ -36,7 +36,7 @@ mod tests {
     #[test]
     fn test_ed25519_basic() {
         use ed25519_dalek::{SigningKey, VerifyingKey, Signer, Verifier};
-        use rand::rngs::OsRng;
+        
         
         let signing_key = SigningKey::from_bytes(&[0u8; 32]);
         let public_key = VerifyingKey::from(&signing_key);

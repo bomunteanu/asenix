@@ -1,7 +1,6 @@
 use crate::error::{MoteError, Result};
 use petgraph::graph::{DiGraph, NodeIndex};
 use std::collections::HashMap;
-use std::sync::Arc;
 use sqlx::Row;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -46,6 +45,12 @@ impl EdgeType {
 pub struct GraphCache {
     pub graph: DiGraph<String, EdgeType>,
     node_indices: HashMap<String, NodeIndex>,
+}
+
+impl Default for GraphCache {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl GraphCache {

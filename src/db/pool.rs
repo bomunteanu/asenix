@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::error::{MoteError, Result};
+use crate::error::Result;
 use sqlx::postgres::PgPoolOptions;
 use sqlx::PgPool;
 use std::time::Duration;
@@ -15,17 +15,4 @@ pub async fn create_pool(_config: &Config, database_url: &str) -> Result<PgPool>
         .await?;
 
     Ok(pool)
-}
-
-pub async fn check_pool_health(pool: &PgPool) -> Result<bool> {
-    let result = sqlx::query("SELECT 1")
-        .fetch_one(pool)
-        .await;
-    
-    match result {
-        Ok(_) => Ok(true),
-        Err(sqlx::Error::PoolTimedOut) => Ok(false),
-        Err(sqlx::Error::PoolClosed) => Ok(false),
-        Err(e) => Err(MoteError::Database(e)),
-    }
 }

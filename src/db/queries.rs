@@ -1,12 +1,8 @@
 use crate::error::{MoteError, Result};
 use crate::domain::agent::{Agent, AgentRegistration, AgentConfirmation};
 use crate::domain::atom::{Atom, AtomInput, AtomType};
-use crate::domain::edge::{Edge, EdgeInput, EdgeType};
-use crate::db::graph_cache::TraversalDirection;
 use sqlx::{PgPool, Row};
 use crate::crypto::{hashing::{compute_atom_id, compute_agent_id}, signing::generate_challenge};
-use serde_json::Value;
-use std::collections::HashMap;
 
 pub async fn register_agent(pool: &PgPool, registration: AgentRegistration) -> Result<AgentRegistrationResponse> {
     let public_key = crate::crypto::signing::hex_to_bytes(&registration.public_key)?;
@@ -93,16 +89,6 @@ pub async fn get_agent(pool: &PgPool, agent_id: &str) -> Result<Option<Agent>> {
     }
 }
 
-pub async fn is_agent_confirmed(pool: &PgPool, agent_id: &str) -> Result<bool> {
-    let confirmed: bool = sqlx::query_scalar("SELECT confirmed FROM agents WHERE agent_id = $1")
-        .bind(agent_id)
-        .fetch_one(pool)
-        .await
-        .unwrap_or(false);
-    
-    Ok(confirmed)
-}
-
 #[derive(Debug)]
 pub struct AgentRegistrationResponse {
     pub agent_id: String,
@@ -126,7 +112,7 @@ pub async fn publish_atom(
         &timestamp,
     );
     
-    let mut tx = pool.begin().await.map_err(|e| MoteError::Database(e))?;
+    let mut tx = pool.begin().await.map_err(MoteError::Database)?;
     
     sqlx::query(
         "INSERT INTO atoms (atom_id, type, domain, statement, conditions, metrics, provenance, signature, author_agent_id, created_at, embedding_status, lifecycle, retracted)
@@ -143,80 +129,14 @@ pub async fn publish_atom(
     .bind(agent_id)
     .execute(&mut *tx)
     .await
-    .map_err(|e| MoteError::Database(e))?;
+    .map_err(MoteError::Database)?;
     
-    tx.commit().await.map_err(|e| MoteError::Database(e))?;
+    tx.commit().await.map_err(MoteError::Database)?;
     
     // TODO: Update graph cache incrementally
     // This would require access to the graph cache, which is typically handled at the handler level
     
     Ok(atom_id)
-}
-
-pub async fn add_edge(
-    pool: &PgPool,
-    source_id: &str,
-    target_id: &str,
-    edge_type: &str,
-    repl_type: Option<&str>,
-) -> Result<()> {
-    sqlx::query(
-        "INSERT INTO edges (source_id, target_id, type, repl_type) VALUES ($1, $2, $3, $4) 
-         ON CONFLICT (source_id, target_id, type) DO NOTHING"
-    )
-    .bind(source_id)
-    .bind(target_id)
-    .bind(edge_type)
-    .bind(repl_type)
-    .execute(pool)
-    .await?;
-
-    Ok(())
-}
-
-#[derive(Debug, Clone)]
-pub struct SearchParams {
-    pub domain_filter: Option<String>,
-    pub type_filter: Option<String>,
-    pub lifecycle_filter: Option<String>,
-    pub condition_predicates: Option<Vec<ConditionPredicate>>,
-    pub text_search: Option<String>,
-    pub embedding_proximity: Option<EmbeddingSearch>,
-    pub graph_traversal: Option<GraphTraversal>,
-    pub limit: i64,
-    pub offset: i64,
-}
-
-#[derive(Debug, Clone)]
-pub struct ConditionPredicate {
-    pub key: String,
-    pub operator: ConditionOperator,
-    pub value: serde_json::Value,
-}
-
-#[derive(Debug, Clone)]
-pub enum ConditionOperator {
-    Equals,
-    NotEquals,
-    GreaterThan,
-    LessThan,
-    Contains,
-    NotContains,
-}
-
-#[derive(Debug, Clone)]
-pub struct EmbeddingSearch {
-    pub query_vector: Vec<f64>,
-    pub similarity_threshold: f64,
-    pub max_results: usize,
-}
-
-#[derive(Debug, Clone)]
-pub struct GraphTraversal {
-    pub start_atom_id: String,
-    pub edge_types: Vec<EdgeType>,
-    pub max_depth: usize,
-    pub direction: TraversalDirection,
 }
 
 pub async fn search_atoms(
@@ -230,17 +150,17 @@ pub async fn search_atoms(
     let mut query = "SELECT * FROM atoms WHERE NOT retracted AND NOT archived".to_string();
     let mut bind_count = 0;
 
-    if let Some(domain) = domain_filter {
+    if let Some(_domain) = domain_filter {
         bind_count += 1;
         query.push_str(&format!(" AND domain = ${}", bind_count));
     }
 
-    if let Some(atom_type) = type_filter {
+    if let Some(_atom_type) = type_filter {
         bind_count += 1;
         query.push_str(&format!(" AND type = ${}", bind_count));
     }
 
-    if let Some(lifecycle) = lifecycle_filter {
+    if let Some(_lifecycle) = lifecycle_filter {
         bind_count += 1;
         query.push_str(&format!(" AND lifecycle = ${}", bind_count));
     }
@@ -308,7 +228,7 @@ pub async fn search_atoms(
             ph_repulsion: row.get::<f32, _>("ph_repulsion") as f64,
             ph_novelty: row.get::<f32, _>("ph_novelty") as f64,
             ph_disagreement: row.get::<f32, _>("ph_disagreement") as f64,
-            embedding: row.get("embedding"),
+            embedding: None, // Skip embedding decoding for now - search doesn't need it
             embedding_status,
             repl_exact: row.get("repl_exact"),
             repl_conceptual: row.get("repl_conceptual"),
@@ -334,7 +254,7 @@ pub async fn get_synthesis_atoms(
     let mut query = "SELECT * FROM atoms WHERE type = 'synthesis' AND NOT retracted AND NOT archived".to_string();
     let mut bind_count = 0;
 
-    if let Some(domain) = domain_filter {
+    if let Some(_domain) = domain_filter {
         bind_count += 1;
         query.push_str(&format!(" AND domain = ${}", bind_count));
     }
@@ -389,7 +309,7 @@ pub async fn get_synthesis_atoms(
             ph_repulsion: row.get::<f32, _>("ph_repulsion") as f64,
             ph_novelty: row.get::<f32, _>("ph_novelty") as f64,
             ph_disagreement: row.get::<f32, _>("ph_disagreement") as f64,
-            embedding: row.get("embedding"),
+            embedding: None, // Skip embedding decoding for now - search doesn't need it
             embedding_status,
             repl_exact: row.get("repl_exact"),
             repl_conceptual: row.get("repl_conceptual"),

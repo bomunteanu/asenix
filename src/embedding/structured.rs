@@ -1,8 +1,6 @@
 use crate::domain::condition::ConditionRegistry;
 use crate::error::Result;
 use crate::domain::atom::Atom;
-use serde_json::json;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::f32::consts::PI;
 
@@ -164,6 +162,7 @@ mod tests {
     use super::*;
     use crate::domain::atom::AtomType;
     use crate::domain::atom::Lifecycle;
+    use serde_json::json;
 
     #[test]
     fn test_determinism() {

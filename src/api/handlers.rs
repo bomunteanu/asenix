@@ -1,10 +1,10 @@
 use crate::state::AppState;
 use axum::{
     extract::{Path, Query, State},
-    http::{StatusCode, header},
+    http::StatusCode,
     response::Json,
 };
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::Row;
 use std::sync::Arc;
@@ -131,38 +131,16 @@ impl Metrics {
     }
 }
 
-#[derive(serde::Serialize)]
-pub struct MetricsResponse {
-    pub total_agents: i64,
-    pub total_atoms: i64,
-    pub total_edges: i64,
-    pub confirmed_agents: i64,
-    pub retracted_atoms: i64,
-}
-
 #[derive(Deserialize)]
 pub struct ReviewQuery {
     pub limit: Option<i64>,
     pub offset: Option<i64>,
-    pub status: Option<String>, // "pending", "reviewed", "all"
 }
 
 #[derive(Deserialize)]
 pub struct ReviewAction {
     pub action: String, // "approve", "reject"
     pub reason: Option<String>,
-}
-
-#[derive(Serialize)]
-pub struct ReviewItem {
-    pub atom_id: String,
-    pub atom_type: String,
-    pub domain: String,
-    pub statement: String,
-    pub author_agent_id: String,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub review_status: String,
-    pub review_reason: Option<String>,
 }
 
 pub async fn health_check(State(state): State<Arc<AppState>>) -> Json<HealthResponse> {

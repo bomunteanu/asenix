@@ -1,8 +1,6 @@
 use crate::error::{MoteError, Result};
 use crate::embedding::semantic::SemanticEncoder;
 use crate::embedding::structured::StructuredEncoder;
-use crate::domain::condition::ConditionRegistry;
-use std::sync::Arc;
 use tracing::info;
 
 pub struct HybridEncoder {
@@ -181,12 +179,13 @@ mod tests {
     use super::*;
     use crate::domain::condition::ConditionRegistry;
     use serde_json::json;
+    use std::sync::Arc;
 
     #[test]
     fn test_hybrid_encoder_creation() {
         let registry = Arc::new(ConditionRegistry::new());
         let semantic_encoder = SemanticEncoder::new().unwrap();
-        let structured_encoder = StructuredEncoder::new(registry.clone(), 10, 2, 4).unwrap();
+        let _structured_encoder = StructuredEncoder::new(registry.clone(), 10, 2, 4).unwrap();
         
         let encoder = HybridEncoder::new(
             semantic_encoder,
@@ -248,7 +247,7 @@ mod tests {
         assert_eq!(combined.len(), 6);
         
         // Calculate expected normalized values
-        let concatenated = vec![1.0, 2.0, 3.0, 0.5, 1.5, 2.5];
+        let concatenated = [1.0, 2.0, 3.0, 0.5, 1.5, 2.5];
         let magnitude: f32 = concatenated.iter().map(|x| x * x).sum::<f32>().sqrt();
         let expected_0 = 1.0 / magnitude;
         let expected_1 = 2.0 / magnitude;
@@ -284,7 +283,7 @@ mod tests {
         assert_eq!(combined.len(), 6);
         
         // Calculate expected normalized values
-        let concatenated = vec![1.0, 2.0, 3.0, 4.0, 0.5, 1.5];
+        let concatenated = [1.0, 2.0, 3.0, 4.0, 0.5, 1.5];
         let magnitude: f32 = concatenated.iter().map(|x| x * x).sum::<f32>().sqrt();
         let expected_0 = 1.0 / magnitude;
         let expected_1 = 2.0 / magnitude;
@@ -314,7 +313,7 @@ mod tests {
         
         // Check that vector contains values in [-1, 1] range
         for &val in &vector {
-            assert!(val >= -1.0 && val <= 1.0);
+            assert!((-1.0..=1.0).contains(&val));
         }
     }
 
@@ -427,7 +426,7 @@ mod tests {
         assert_eq!(result.len(), 8);
         
         // Calculate expected normalized values (only structured part contributes)
-        let concatenated = vec![0.0, 0.0, 0.0, 0.0, 1.0, 2.0, 3.0, 4.0];
+        let concatenated = [0.0, 0.0, 0.0, 0.0, 1.0, 2.0, 3.0, 4.0];
         let magnitude: f32 = concatenated.iter().map(|x| x * x).sum::<f32>().sqrt();
         let expected_0 = 0.0 / magnitude; // semantic zeros
         let expected_1 = 0.0 / magnitude;

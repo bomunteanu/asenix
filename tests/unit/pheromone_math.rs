@@ -3,7 +3,7 @@
 //! Tests attraction boost calculation, novelty calculation, and contradiction effects
 //! on pheromone components with defined deltas, caps, and normalizations.
 
-use mote::domain::pheromone::{attraction_boost, novelty, disagreement, decay_attraction, suggestion_score, metrics_contradict, extract_metric_value, is_higher_better};
+use mote::domain::pheromone::{attraction_boost, novelty, disagreement, decay_attraction, metrics_contradict, extract_metric_value, is_higher_better};
 use serde_json::json;
 
 #[test]
@@ -62,16 +62,6 @@ fn test_decay_attraction() {
     let decayed = decay_attraction(attraction, hours_elapsed, half_life_hours, floor_threshold);
     assert!(decayed < attraction); // Should decay
     assert!(decayed >= 0.0);
-}
-
-#[test]
-fn test_suggestion_score() {
-    let novelty = 0.3;
-    let disagreement = 0.2;
-    let attraction = 8.0;
-    let repulsion = 1.0;
-    let score = suggestion_score(novelty, disagreement, attraction, repulsion);
-    assert!(score >= 0.0);
 }
 
 #[test]

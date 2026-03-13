@@ -262,16 +262,14 @@ fn test_condition_validation() {
 #[test]
 fn test_condition_operators() {
     // Test that all operators can be created
-    let operators = vec![
-        ConditionOperator::Equals,
+    let operators = [ConditionOperator::Equals,
         ConditionOperator::NotEquals,
         ConditionOperator::GreaterThan,
         ConditionOperator::LessThan,
         ConditionOperator::GreaterThanOrEqual,
         ConditionOperator::LessThanOrEqual,
         ConditionOperator::Contains,
-        ConditionOperator::NotContains,
-    ];
+        ConditionOperator::NotContains];
 
     assert_eq!(operators.len(), 8, "Should have 8 different operators");
 }

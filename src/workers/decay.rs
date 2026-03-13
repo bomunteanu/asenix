@@ -3,7 +3,7 @@ use crate::domain::pheromone::decay_attraction;
 use crate::error::{MoteError, Result};
 use sqlx::{PgPool, Row};
 use tracing::info;
-use chrono::{DateTime, Utc, Duration};
+use chrono::{DateTime, Utc};
 
 pub struct DecayWorker {
     pool: PgPool,
@@ -88,7 +88,7 @@ impl DecayWorker {
 
         // For MVP, use individual updates in a transaction
         // In a production system, this would use a more efficient batch operation
-        let mut tx = self.pool.begin().await.map_err(|e| MoteError::Database(e))?;
+        let mut tx = self.pool.begin().await.map_err(MoteError::Database)?;
 
         for (atom_id, new_attraction) in decayed_atoms {
             sqlx::query("UPDATE atoms SET ph_attraction = $1 WHERE atom_id = $2")
@@ -96,10 +96,10 @@ impl DecayWorker {
                 .bind(&atom_id)
                 .execute(&mut *tx)
                 .await
-                .map_err(|e| MoteError::Database(e))?;
+                .map_err(MoteError::Database)?;
         }
 
-        tx.commit().await.map_err(|e| MoteError::Database(e))?;
+        tx.commit().await.map_err(MoteError::Database)?;
 
         Ok(count)
     }

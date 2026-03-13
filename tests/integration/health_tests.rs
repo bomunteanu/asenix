@@ -158,8 +158,7 @@ async fn test_metrics_endpoint_prometheus_format() {
     assert!(has_type, "Metrics should contain TYPE comments");
     
     // Should have actual metric lines
-    let metric_lines: Vec<&str> = lines.iter()
-        .map(|&line| line)
+    let metric_lines: Vec<&str> = lines.iter().copied()
         .filter(|line| !line.starts_with("#") && !line.trim().is_empty())
         .collect();
     

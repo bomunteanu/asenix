@@ -361,7 +361,7 @@ impl EmbeddingQueue {
     /// Find atoms within neighbourhood radius of the given embedding
     async fn find_neighbours(&self, embedding: &[f64], domain: &str) -> Result<Vec<NeighbourInfo>> {
         let rows = sqlx::query(
-            "SELECT atom_id, ph_attraction, ph_repulsion, ph_novelty, ph_disagreement, metrics
+            "SELECT atom_id, ph_attraction, ph_repulsion, metrics
              FROM atoms 
              WHERE embedding IS NOT NULL 
              AND embedding_status = 'ready' 
@@ -381,8 +381,6 @@ impl EmbeddingQueue {
                 atom_id: row.get("atom_id"),
                 ph_attraction: row.get("ph_attraction"),
                 ph_repulsion: row.get("ph_repulsion"),
-                ph_novelty: row.get("ph_novelty"),
-                ph_disagreement: row.get("ph_disagreement"),
                 metrics: row.get("metrics"),
             });
         }
@@ -588,7 +586,7 @@ impl EmbeddingQueue {
         // Group updates by atom_id for efficiency
         let mut atom_updates: std::collections::HashMap<String, Vec<(&str, f64)>> = std::collections::HashMap::new();
         for (atom_id, field, value) in updates {
-            atom_updates.entry(atom_id).or_insert_with(Vec::new).push((field, value));
+            atom_updates.entry(atom_id).or_default().push((field, value));
         }
 
         // Apply updates atom by atom
@@ -618,8 +616,6 @@ struct NeighbourInfo {
     atom_id: String,
     ph_attraction: f64,
     ph_repulsion: f64,
-    ph_novelty: f64,
-    ph_disagreement: f64,
     metrics: Option<Value>,
 }
 

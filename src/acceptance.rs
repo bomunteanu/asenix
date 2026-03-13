@@ -1,6 +1,5 @@
 use crate::error::{MoteError, Result};
 use crate::domain::atom::{AtomInput, AtomType};
-use serde_json::json;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -19,6 +18,12 @@ pub struct AcceptanceRule {
 
 pub struct AcceptancePipeline {
     rules: HashMap<String, AcceptanceRule>,
+}
+
+impl Default for AcceptancePipeline {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AcceptancePipeline {
@@ -131,7 +136,7 @@ impl AcceptancePipeline {
         match atom_input.atom_type {
             AtomType::Hypothesis => {
                 // Hypotheses should have some structured conditions
-                if atom_input.conditions.as_object().map_or(true, |obj| obj.is_empty()) {
+                if atom_input.conditions.as_object().is_none_or(|obj| obj.is_empty()) {
                     return AcceptanceDecision::Queue("Hypothesis without conditions queued for review".to_string());
                 }
             },
@@ -173,6 +178,7 @@ impl AcceptancePipeline {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     
     #[test]
     fn test_statement_length_validation() {

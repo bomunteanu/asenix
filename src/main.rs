@@ -5,7 +5,6 @@ use clap::Parser;
 use std::path::PathBuf;
 use std::time::Duration;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-use tracing;
 
 mod api;
 mod config;

@@ -114,7 +114,7 @@ mod tests {
         // Test creating public key from bytes
         let signing_key = SigningKey::from_bytes(&[0u8; 32]);
         let public_key1 = VerifyingKey::from(&signing_key);
-        let public_key2 = VerifyingKey::from_bytes(&public_key1.as_bytes()).unwrap();
+        let public_key2 = VerifyingKey::from_bytes(public_key1.as_bytes()).unwrap();
         
         assert_eq!(public_key1.as_bytes(), public_key2.as_bytes());
     }

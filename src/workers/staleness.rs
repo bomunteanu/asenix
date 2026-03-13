@@ -31,7 +31,7 @@ impl StalenessWorker {
 
         for synthesis_row in synthesis_atoms {
             let atom_id: String = synthesis_row.get("atom_id");
-            let embedding: Vec<f64> = synthesis_row.get("embedding");
+            let embedding: Option<Vec<f64>> = synthesis_row.get("embedding");
             let created_at: chrono::DateTime<chrono::Utc> = synthesis_row.get("created_at");
 
             // Count newer atoms in neighbourhood
@@ -57,7 +57,9 @@ impl StalenessWorker {
                 );
                 
                 // Emit synthesis_needed event
-                self.emit_synthesis_needed_event(&embedding, newer_atoms_count as usize).await?;
+                if let Some(embedding) = embedding {
+                    self.emit_synthesis_needed_event(&embedding, newer_atoms_count as usize).await?;
+                }
                 stale_count += 1;
             }
         }
@@ -114,7 +116,7 @@ impl StalenessWorker {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    
 
     #[tokio::test]
     async fn test_stale_synthesis_detection() {

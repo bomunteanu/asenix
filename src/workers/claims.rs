@@ -45,16 +45,6 @@ impl ClaimsExpiryWorker {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use sqlx::PgPool;
-    use chrono::{Utc, Duration as ChronoDuration};
-
-    async fn setup_test_pool() -> PgPool {
-        // This would use a test database in real implementation
-        // For now, we'll skip the actual database tests
-        panic!("Test database setup needed");
-    }
-
     #[tokio::test]
     async fn test_expiry_logic() {
         // Test would:

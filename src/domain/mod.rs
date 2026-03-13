@@ -1,6 +1,5 @@
 pub mod agent;
 pub mod atom;
-pub mod claim;
 pub mod condition;
 pub mod edge;
 pub mod lifecycle;

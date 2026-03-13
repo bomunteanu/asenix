@@ -3,7 +3,7 @@ use sqlx::Row;
 
 #[tokio::test]
 async fn test_dynamic_schema_embedding_column_dimension() {
-    let app = setup_test_app().await;
+    let _app = setup_test_app().await;
     
     // Get the application state to access the database pool
     // We need to extract this from the router by making a request and checking the config
@@ -30,7 +30,7 @@ async fn test_dynamic_schema_embedding_column_dimension() {
 
 #[tokio::test]
 async fn test_hnsw_index_exists() {
-    let app = setup_test_app().await;
+    let _app = setup_test_app().await;
     
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql://postgres:password@localhost:5432/mote_test".to_string());
@@ -59,7 +59,7 @@ async fn test_hnsw_index_exists() {
 
 #[tokio::test]
 async fn test_pgvector_extension_installed() {
-    let app = setup_test_app().await;
+    let _app = setup_test_app().await;
     
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql://postgres:password@localhost:5432/mote_test".to_string());
@@ -85,7 +85,7 @@ async fn test_migration_idempotency() {
     drop(app1);
     
     // Second setup - should not fail
-    let app2 = setup_test_app().await;
+    let _app2 = setup_test_app().await;
     
     // Verify database is still accessible
     let database_url = std::env::var("DATABASE_URL")
@@ -105,7 +105,7 @@ async fn test_migration_idempotency() {
 
 #[tokio::test]
 async fn test_all_tables_exist() {
-    let app = setup_test_app().await;
+    let _app = setup_test_app().await;
     
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql://postgres:password@localhost:5432/mote_test".to_string());
@@ -140,7 +140,7 @@ async fn test_all_tables_exist() {
 
 #[tokio::test]
 async fn test_foreign_key_constraints_exist() {
-    let app = setup_test_app().await;
+    let _app = setup_test_app().await;
     
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql://postgres:password@localhost:5432/mote_test".to_string());
@@ -175,7 +175,7 @@ async fn test_foreign_key_constraints_exist() {
 
 #[tokio::test]
 async fn test_indexes_exist() {
-    let app = setup_test_app().await;
+    let _app = setup_test_app().await;
     
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql://postgres:password@localhost:5432/mote_test".to_string());
@@ -211,7 +211,7 @@ async fn test_indexes_exist() {
 
 #[tokio::test]
 async fn test_vector_column_type() {
-    let app = setup_test_app().await;
+    let _app = setup_test_app().await;
     
     let database_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| "postgresql://postgres:password@localhost:5432/mote_test".to_string());

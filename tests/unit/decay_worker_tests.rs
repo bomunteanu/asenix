@@ -3,7 +3,7 @@
 //! Tests the decay worker functionality including batch updates, statistics,
 //! and proper handling of edge cases.
 
-use mote::workers::decay::{DecayWorker, DecayStats};
+use mote::workers::decay::DecayStats;
 use mote::config::{Config, PheromoneConfig, HubConfig, TrustConfig, WorkersConfig, AcceptanceConfig};
 use std::time::Duration;
 
@@ -137,8 +137,8 @@ async fn test_decay_worker_configuration_validation() {
 
 #[tokio::test]
 async fn test_decay_worker_time_calculations() {
-    use chrono::{DateTime, Utc};
-    use std::time::SystemTime;
+    use chrono::Utc;
+    
     
     let now = Utc::now();
     let past = now - chrono::Duration::hours(24);
@@ -160,11 +160,9 @@ async fn test_decay_worker_time_calculations() {
 #[tokio::test]
 async fn test_decay_worker_batch_logic() {
     // Test the batch processing logic without database
-    let test_atoms = vec![
-        ("atom1".to_string(), 5.0),
+    let test_atoms = [("atom1".to_string(), 5.0),
         ("atom2".to_string(), 3.0),
-        ("atom3".to_string(), 7.0),
-    ];
+        ("atom3".to_string(), 7.0)];
     
     assert_eq!(test_atoms.len(), 3, "Test data should have 3 atoms");
     

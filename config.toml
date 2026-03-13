@@ -1,0 +1,35 @@
+[hub]
+name = "mote-hub"
+domain = "research"
+listen_address = "0.0.0.0:3000"
+embedding_endpoint = "http://localhost:8080/embed"
+embedding_model = "text-embedding-ada-002"
+embedding_dimension = 1536
+structured_vector_reserved_dims = 256
+dims_per_numeric_key = 4
+dims_per_categorical_key = 16
+neighbourhood_radius = 0.3
+# Optional LLM for summaries
+# summary_llm_endpoint = "http://localhost:8081/completions"
+# summary_llm_model = "gpt-3.5-turbo"
+
+[pheromone]
+decay_half_life_hours = 168
+attraction_cap = 100.0
+novelty_radius = 0.3
+disagreement_threshold = 0.5
+
+[trust]
+reliability_threshold = 0.3
+independence_ancestry_depth = 5
+probation_atom_count = 10
+max_atoms_per_hour = 1000
+
+[workers]
+embedding_pool_size = 32
+decay_interval_minutes = 60
+claim_ttl_hours = 24
+staleness_check_interval_minutes = 30
+
+[acceptance]
+required_provenance_fields = ["code_hash", "environment"]

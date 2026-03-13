@@ -93,21 +93,6 @@ pub fn decay_attraction(
     }
 }
 
-/// Compute suggestion score from pheromone vector
-/// Formula: novelty * (1.0 + disagreement) * attraction / (1.0 + repulsion)
-pub fn suggestion_score(
-    novelty: f64,
-    disagreement: f64,
-    attraction: f64,
-    repulsion: f64,
-) -> f64 {
-    if novelty == 0.0 || attraction == 0.0 {
-        0.0
-    } else {
-        novelty * (1.0 + disagreement) * attraction / (1.0 + repulsion)
-    }
-}
-
 /// Check if two metric values contradict based on direction and threshold
 /// Returns true if contradiction detected (more than 10% difference in wrong direction)
 pub fn metrics_contradict(
@@ -235,24 +220,6 @@ mod tests {
         // Very long time
         let result = decay_attraction(10.0, 10000.0, half_life, 0.001);
         assert_eq!(result, 0.0);
-    }
-
-    #[test]
-    fn test_suggestion_score() {
-        let score = suggestion_score(0.5, 0.3, 2.0, 1.0);
-        assert!((score - 0.65).abs() < f32::EPSILON as f64);
-        
-        // Zero repulsion
-        let score = suggestion_score(0.5, 0.3, 2.0, 0.0);
-        assert!((score - 1.3).abs() < f32::EPSILON as f64);
-        
-        // Zero attraction
-        let score = suggestion_score(0.5, 0.3, 0.0, 1.0);
-        assert_eq!(score, 0.0);
-        
-        // Zero novelty
-        let score = suggestion_score(0.0, 0.3, 2.0, 1.0);
-        assert_eq!(score, 0.0);
     }
 
     #[test]
