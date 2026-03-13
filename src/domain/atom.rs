@@ -13,6 +13,7 @@ pub struct Atom {
     pub author_agent_id: String,
     pub created_at: DateTime<Utc>,
     pub signature: Vec<u8>,
+    pub artifact_tree_hash: Option<String>,
     
     // Mutable meta fields
     pub confidence: f64,
@@ -103,6 +104,7 @@ pub struct AtomInput {
     pub metrics: Option<serde_json::Value>,
     pub provenance: serde_json::Value,
     pub signature: Vec<u8>,
+    pub artifact_tree_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

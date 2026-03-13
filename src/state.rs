@@ -1,6 +1,7 @@
 use crate::config::Config;
 use crate::db::graph_cache::GraphCache;
 use crate::api::handlers::Metrics;
+use crate::storage::LocalStorage;
 use sqlx::PgPool;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -68,6 +69,7 @@ pub struct AppState {
     pub rate_limiter: RateLimiter,
     pub config: Arc<Config>,
     pub metrics: Arc<Metrics>,
+    pub storage: Arc<crate::storage::LocalStorage>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -83,6 +85,7 @@ impl AppState {
         config: Arc<Config>,
         embedding_queue_tx: mpsc::Sender<String>,
         sse_broadcast_tx: broadcast::Sender<SseEvent>,
+        storage: Arc<crate::storage::LocalStorage>,
     ) -> Result<Self, crate::error::MoteError> {
         // Initialize graph cache
         let graph_cache = Arc::new(tokio::sync::RwLock::new(
@@ -103,6 +106,7 @@ impl AppState {
             rate_limiter: RateLimiter::new(),
             config,
             metrics: Arc::new(Metrics::default()),
+            storage,
         })
     }
 }

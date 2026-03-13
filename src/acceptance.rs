@@ -193,6 +193,7 @@ mod tests {
             metrics: None,
             provenance: json!({}),
             signature: vec![1, 2, 3],
+            artifact_tree_hash: None,
         };
         
         match pipeline.evaluate_atom(&short_atom) {
@@ -209,6 +210,7 @@ mod tests {
             metrics: Some(json!({"accuracy": 0.95})),
             provenance: json!({}),
             signature: vec![1, 2, 3],
+            artifact_tree_hash: None,
         };
         
         match pipeline.evaluate_atom(&valid_atom) {

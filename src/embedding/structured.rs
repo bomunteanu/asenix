@@ -185,6 +185,7 @@ mod tests {
             author_agent_id: "test_author".to_string(),
             created_at: chrono::Utc::now(),
             signature: vec![],
+            artifact_tree_hash: None,
             confidence: 0.5,
             ph_attraction: 0.0,
             ph_repulsion: 0.0,

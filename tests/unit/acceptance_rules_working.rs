@@ -18,6 +18,7 @@ async fn test_acceptance_pipeline_statement_length_validation() {
         metrics: Some(json!({"accuracy": 0.95})), // Add metrics to avoid atom type rule
         provenance: json!({}),
         signature: vec![1, 2, 3],
+        artifact_tree_hash: None,
     };
     
     match pipeline.evaluate_atom(&short_atom) {
@@ -36,6 +37,7 @@ async fn test_acceptance_pipeline_statement_length_validation() {
         metrics: Some(json!({"accuracy": 0.95})), // Add metrics to avoid atom type rule
         provenance: json!({}),
         signature: vec![1, 2, 3],
+        artifact_tree_hash: None,
     };
     
     match pipeline.evaluate_atom(&long_atom) {
@@ -46,17 +48,18 @@ async fn test_acceptance_pipeline_statement_length_validation() {
     }
     
     // Test valid length (but provide metrics to avoid atom type rule triggering first)
-    let valid_atom = AtomInput {
+    let valid_length_atom = AtomInput {
         atom_type: AtomType::Finding,
         domain: "test".to_string(),
-        statement: "This is a valid statement length".to_string(),
+        statement: "This is a very long statement that exceeds the maximum allowed length for research findings and should therefore be rejected by the acceptance pipeline validation rules".to_string(),
         conditions: json!({}),
         metrics: Some(json!({"accuracy": 0.95})), // Add metrics to avoid atom type rule
         provenance: json!({}),
         signature: vec![1, 2, 3],
+        artifact_tree_hash: None,
     };
     
-    match pipeline.evaluate_atom(&valid_atom) {
+    match pipeline.evaluate_atom(&valid_length_atom) {
         mote::acceptance::AcceptanceDecision::Accept => {},
         _ => panic!("Expected acceptance for valid statement"),
     }
@@ -75,6 +78,7 @@ async fn test_acceptance_pipeline_required_fields_validation() {
         metrics: None,
         provenance: json!({}),
         signature: vec![1, 2, 3],
+        artifact_tree_hash: None,
     };
     
     match pipeline.evaluate_atom(&no_domain_atom) {
@@ -92,7 +96,8 @@ async fn test_acceptance_pipeline_required_fields_validation() {
         conditions: json!({}),
         metrics: None,
         provenance: json!({}),
-        signature: vec![1, 2, 3],
+        signature: vec![],
+        artifact_tree_hash: None,
     };
     
     match pipeline.evaluate_atom(&no_statement_atom) {
@@ -112,6 +117,7 @@ async fn test_acceptance_pipeline_required_fields_validation() {
         metrics: None,
         provenance: json!({}),
         signature: vec![],
+        artifact_tree_hash: None,
     };
     
     match pipeline.evaluate_atom(&no_signature_atom) {
@@ -135,6 +141,7 @@ async fn test_acceptance_pipeline_domain_validation() {
         metrics: None,
         provenance: json!({}),
         signature: vec![1, 2, 3],
+        artifact_tree_hash: None,
     };
     
     match pipeline.evaluate_atom(&invalid_domain_atom) {
@@ -153,6 +160,7 @@ async fn test_acceptance_pipeline_domain_validation() {
         metrics: None,
         provenance: json!({}),
         signature: vec![1, 2, 3],
+        artifact_tree_hash: None,
     };
     
     match pipeline.evaluate_atom(&long_domain_atom) {
@@ -171,6 +179,7 @@ async fn test_acceptance_pipeline_domain_validation() {
         metrics: Some(json!({"accuracy": 0.95})), // Add metrics to avoid atom type rule
         provenance: json!({}),
         signature: vec![1, 2, 3],
+        artifact_tree_hash: None,
     };
     
     match pipeline.evaluate_atom(&valid_domain_atom) {
@@ -192,6 +201,7 @@ async fn test_acceptance_pipeline_atom_type_limits() {
         metrics: None,
         provenance: json!({}),
         signature: vec![1, 2, 3],
+        artifact_tree_hash: None,
     };
     
     match pipeline.evaluate_atom(&hypothesis_no_conditions) {
@@ -210,6 +220,7 @@ async fn test_acceptance_pipeline_atom_type_limits() {
         metrics: None, // No metrics
         provenance: json!({}),
         signature: vec![1, 2, 3],
+        artifact_tree_hash: None,
     };
     
     match pipeline.evaluate_atom(&finding_no_metrics) {
@@ -228,6 +239,7 @@ async fn test_acceptance_pipeline_atom_type_limits() {
         metrics: None,
         provenance: json!({}),
         signature: vec![1, 2, 3],
+        artifact_tree_hash: None,
     };
     
     match pipeline.evaluate_atom(&valid_hypothesis) {
@@ -241,9 +253,10 @@ async fn test_acceptance_pipeline_atom_type_limits() {
         domain: "test".to_string(),
         statement: "Test finding with metrics".to_string(),
         conditions: json!({"temperature": 25.0}),
-        metrics: Some(json!({"accuracy": 0.95, "precision": 0.87})),
+        metrics: Some(json!({"accuracy": 0.95})),
         provenance: json!({}),
         signature: vec![1, 2, 3],
+        artifact_tree_hash: None,
     };
     
     match pipeline.evaluate_atom(&valid_finding) {
@@ -277,6 +290,7 @@ async fn test_acceptance_pipeline_complete_flow() {
             "lab": "Chemistry Lab A"
         }),
         signature: vec![1, 2, 3, 4, 5],
+        artifact_tree_hash: None,
     };
     
     match pipeline.evaluate_atom(&valid_atom) {

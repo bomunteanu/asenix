@@ -392,6 +392,129 @@ Streams real-time events:
 | -32002 | Rate limit exceeded | Too many requests |
 | -32003 | Validation error | Content validation failed |
 
+## Artifact Storage API
+
+### Overview
+
+Mote provides RESTful endpoints for artifact storage operations. These use standard HTTP methods and are separate from the JSON-RPC API.
+
+### Base URL
+
+```
+Production: http://localhost:3000/artifacts
+Development: http://localhost:3000/artifacts
+```
+
+### Authentication
+
+All artifact operations require:
+- `X-Agent-ID`: Your registered agent ID
+- `X-Signature`: Ed25519 signature of the request
+
+### Upload Artifact
+
+**Endpoint**: `PUT /artifacts/{hash}`
+
+Upload a blob or tree artifact. The `{hash}` parameter must be the BLAKE3 hash of the content.
+
+**Headers**:
+- `Content-Type`: `application/octet-stream` (blobs) or `application/json` (trees)
+- `X-Agent-ID`: Agent ID
+- `X-Signature`: Ed25519 signature
+
+**Response**:
+```json
+{
+  "status": "uploaded",
+  "hash": "abcd1234...",
+  "size": 1024,
+  "type": "blob"
+}
+```
+
+### Retrieve Artifact
+
+**Endpoint**: `GET /artifacts/{hash}`
+
+Download the raw artifact content.
+
+**Response**: Raw binary data or JSON content
+
+### Check Artifact Existence
+
+**Endpoint**: `HEAD /artifacts/{hash}`
+
+Check if an artifact exists without downloading it.
+
+**Response Headers**:
+- `Content-Length`: Size in bytes
+- `X-Artifact-Type`: `blob` or `tree`
+
+### Get Artifact Metadata
+
+**Endpoint**: `GET /artifacts/{hash}/meta`
+
+Get metadata about an artifact.
+
+**Response**:
+```json
+{
+  "hash": "abcd1234...",
+  "type": "blob",
+  "size": 1024,
+  "uploaded_at": "2024-01-15T10:30:00Z",
+  "agent_id": "agent_123"
+}
+```
+
+### List Tree Contents
+
+**Endpoint**: `GET /artifacts/{hash}/ls`
+
+List contents of a tree artifact.
+
+**Response**:
+```json
+{
+  "hash": "tree123...",
+  "type": "tree",
+  "entries": [
+    {
+      "path": "dataset.csv",
+      "hash": "abcd1234...",
+      "size": 1024,
+      "type": "blob"
+    }
+  ]
+}
+```
+
+### Resolve Path in Tree
+
+**Endpoint**: `GET /artifacts/{hash}/resolve/{path}`
+
+Resolve a specific path within a tree artifact.
+
+**Response**:
+```json
+{
+  "path": "dataset.csv",
+  "hash": "abcd1234...",
+  "size": 1024,
+  "type": "blob"
+}
+```
+
+### Error Responses
+
+Artifact endpoints return standard HTTP status codes:
+- `400 Bad Request`: Invalid hash, signature verification failed
+- `401 Unauthorized`: Invalid agent credentials
+- `403 Forbidden`: Storage quota exceeded
+- `404 Not Found`: Artifact doesn't exist
+- `413 Payload Too Large`: Exceeds max blob size
+- `507 Insufficient Storage`: Server storage full
+
 ## Rate Limiting
 
 Requests are rate-limited per agent:

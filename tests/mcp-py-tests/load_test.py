@@ -126,14 +126,15 @@ class MoteLoadTestAgent:
     def __init__(self, agent_id, base_url="http://localhost:3000"):
         self.agent_id = agent_id
         self.base_url = base_url
-        self.mcp_url = f"{base_url}/mcp"
+        self.rpc_url = f"{base_url}/rpc"  # Use RPC endpoint instead of MCP
         self.private_key = ed25519.Ed25519PrivateKey.generate()
         self.public_key = self.private_key.public_key()
         self.registered_agent_id = None
+        self.session_id = None
         self.metrics = LoadTestMetrics()
         
-    async def make_mcp_request(self, session, method, params=None, request_id=1):
-        """Make a JSON-RPC 2.0 request to Mote"""
+    async def make_rpc_request(self, session, method, params=None, request_id=1):
+        """Make a JSON-RPC 2.0 request to Mote RPC endpoint"""
         start_time = time.time()
         try:
             payload = {
@@ -143,7 +144,7 @@ class MoteLoadTestAgent:
                 "id": request_id
             }
             
-            async with session.post(self.mcp_url, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as response:
+            async with session.post(self.rpc_url, json=payload, timeout=aiohttp.ClientTimeout(total=30)) as response:
                 result = await response.json()
                 latency = time.time() - start_time
                 
@@ -154,11 +155,11 @@ class MoteLoadTestAgent:
         except Exception as e:
             latency = time.time() - start_time
             logger.error(f"Request failed for {method}: {e}")
-            return False, latency, {'error': str(e)}
+            return False, latency, {"error": str(e)}
     
     async def register(self, session):
         """Register the agent with Mote"""
-        success, latency, response = await self.make_mcp_request(
+        success, latency, response = await self.make_rpc_request(
             session, "register_agent", {
                 "public_key": binascii.hexlify(self.public_key.public_bytes_raw()).decode()
             }, self.agent_id * 1000 + 1

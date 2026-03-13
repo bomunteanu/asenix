@@ -9,4 +9,5 @@ pub mod domain;
 pub mod embedding;
 pub mod error;
 pub mod state;
+pub mod storage;
 pub mod workers;

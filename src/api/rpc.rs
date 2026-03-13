@@ -216,7 +216,7 @@ async fn authenticate_and_rate_limit(
 }
 
 // Handler implementations
-async fn handle_register_agent(
+pub async fn handle_register_agent(
     state: &AppState,
     params: Option<Value>,
 ) -> Result<Value> {
@@ -235,7 +235,7 @@ async fn handle_register_agent(
     }))
 }
 
-async fn handle_confirm_agent(
+pub async fn handle_confirm_agent(
     state: &AppState,
     params: Option<Value>,
 ) -> Result<Value> {
@@ -254,7 +254,7 @@ async fn handle_confirm_agent(
     Ok(json!({ "status": "confirmed" }))
 }
 
-async fn handle_search_atoms(
+pub async fn handle_search_atoms(
     state: &AppState,
     params: Option<Value>,
 ) -> Result<Value> {
@@ -278,14 +278,14 @@ async fn handle_search_atoms(
     Ok(json!({ "atoms": atoms }))
 }
 
-async fn handle_query_cluster(
+pub async fn handle_query_cluster(
     _state: &AppState,
     _params: Option<Value>,
 ) -> Result<Value> {
     Err(MoteError::Validation("not yet implemented".to_string()))
 }
 
-async fn handle_claim_direction(
+pub async fn handle_claim_direction(
     state: &AppState,
     params: Option<Value>,
 ) -> Result<Value> {
@@ -296,7 +296,7 @@ async fn handle_claim_direction(
     Err(MoteError::Validation("not yet implemented".to_string()))
 }
 
-async fn handle_publish_atoms(
+pub async fn handle_publish_atoms(
     state: &AppState,
     params: Option<Value>,
 ) -> Result<Value> {
@@ -346,6 +346,9 @@ async fn handle_publish_atoms(
             Some(atom_value["metrics"].clone())
         };
 
+        let artifact_tree_hash: Option<String> = serde_json::from_value(atom_value["artifact_tree_hash"].clone())
+            .unwrap_or(None);
+
         let atom_input = crate::domain::atom::AtomInput {
             atom_type,
             domain: serde_json::from_value(atom_value["domain"].clone())
@@ -357,6 +360,7 @@ async fn handle_publish_atoms(
             provenance,
             signature: serde_json::from_value(atom_value["signature"].clone())
                 .map_err(|_| MoteError::Validation("signature field required".to_string()))?,
+            artifact_tree_hash,
         };
 
         let atom_id = crate::db::queries::publish_atom(&state.pool, &agent_id, atom_input).await?;
@@ -375,7 +379,7 @@ async fn handle_publish_atoms(
     Ok(json!({ "published_atoms": published_atoms }))
 }
 
-async fn handle_retract_atom(
+pub async fn handle_retract_atom(
     state: &AppState,
     params: Option<Value>,
 ) -> Result<Value> {
@@ -394,7 +398,7 @@ async fn handle_retract_atom(
     Ok(json!({ "status": "retracted" }))
 }
 
-async fn handle_get_suggestions(
+pub async fn handle_get_suggestions(
     state: &AppState,
     params: Option<Value>,
 ) -> Result<Value> {
@@ -465,7 +469,7 @@ async fn handle_get_suggestions(
     }))
 }
 
-async fn handle_get_field_map(
+pub async fn handle_get_field_map(
     state: &AppState,
     params: Option<Value>,
 ) -> Result<Value> {

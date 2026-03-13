@@ -8,6 +8,7 @@ pub struct Config {
     pub trust: TrustConfig,
     pub workers: WorkersConfig,
     pub acceptance: AcceptanceConfig,
+    pub mcp: McpConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -24,6 +25,9 @@ pub struct HubConfig {
     pub neighbourhood_radius: f64,
     pub summary_llm_endpoint: Option<String>,
     pub summary_llm_model: Option<String>,
+    pub artifact_storage_path: String,
+    pub max_artifact_blob_bytes: u64,
+    pub max_artifact_storage_per_agent_bytes: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -53,6 +57,11 @@ pub struct WorkersConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AcceptanceConfig {
     pub required_provenance_fields: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpConfig {
+    pub allowed_origins: Vec<String>,
 }
 
 impl Config {

@@ -90,14 +90,16 @@ fn create_test_atom_input() -> AtomInput {
             "uncertainty": 0.1
         }),
         metrics: None,
-        provenance: Provenance {
-            methodology: "controlled_experiment".to_string(),
-            data_source: "lab_measurement".to_string(),
-            confidence: 0.95,
-            parent_ids: vec!["parent_1".to_string()],
-            metadata: json!({"equipment": "spectrometer"}),
-        },
-        signature: vec![],
+        provenance: json!({
+            "parent_ids": ["parent_1".to_string()],
+            "code_hash": "abc123",
+            "environment": "lab",
+            "dataset_fingerprint": "data123",
+            "experiment_ref": "exp123",
+            "method_description": "controlled_experiment"
+        }),
+        signature: vec![1, 2, 3],
+        artifact_tree_hash: None,
     }
 }
 

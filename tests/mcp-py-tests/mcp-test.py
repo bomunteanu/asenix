@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Simple test agent for Mote infrastructure
+Using the working RPC endpoints instead of MCP session protocol
 """
 import requests
 import json
@@ -12,13 +13,13 @@ import binascii
 class MoteAgent:
     def __init__(self, base_url="http://localhost:3000"):
         self.base_url = base_url
-        self.mcp_url = f"{base_url}/mcp"
+        self.rpc_url = f"{base_url}/rpc"  # Use RPC endpoint instead of MCP
         self.agent_id = None
         self.private_key = ed25519.Ed25519PrivateKey.generate()
         self.public_key = self.private_key.public_key()
         
-    def make_mcp_request(self, method, params=None, request_id=1):
-        """Make a JSON-RPC 2.0 request to Mote"""
+    def make_rpc_request(self, method, params=None, request_id=1):
+        """Make a JSON-RPC 2.0 request to Mote RPC endpoint"""
         payload = {
             "jsonrpc": "2.0",
             "method": method,
@@ -26,7 +27,7 @@ class MoteAgent:
             "id": request_id
         }
         
-        response = requests.post(self.mcp_url, json=payload)
+        response = requests.post(self.rpc_url, json=payload)
         response.raise_for_status()
         return response.json()
     
@@ -35,7 +36,7 @@ class MoteAgent:
         print("🔐 Registering agent...")
         public_key_hex = binascii.hexlify(self.public_key.public_bytes_raw()).decode()
         
-        response = self.make_mcp_request("register_agent", {
+        response = self.make_rpc_request("register_agent", {
             "public_key": public_key_hex
         })
         
@@ -55,7 +56,7 @@ class MoteAgent:
         signature = self.private_key.sign(challenge_bytes)
         signature_hex = binascii.hexlify(signature).decode()
         
-        response = self.make_mcp_request("confirm_agent", {
+        response = self.make_rpc_request("confirm_agent", {
             "agent_id": self.agent_id,
             "signature": signature_hex
         })
@@ -116,7 +117,7 @@ class MoteAgent:
             "atoms": [atom_data]
         }
         
-        response = self.make_mcp_request("publish_atoms", final_request)
+        response = self.make_rpc_request("publish_atoms", final_request)
         
         if "result" in response:
             atom_ids = response["result"].get("atom_ids", [])
@@ -130,7 +131,7 @@ class MoteAgent:
         """Get suggestions from Mote"""
         print("🔍 Getting suggestions...")
         
-        response = self.make_mcp_request("get_suggestions", {
+        response = self.make_rpc_request("get_suggestions", {
             "context": {"domain": "machine_learning"},
             "k": 5
         })
@@ -149,7 +150,7 @@ class MoteAgent:
         """Search for atoms"""
         print("🔎 Searching atoms...")
         
-        response = self.make_mcp_request("search_atoms", {
+        response = self.make_rpc_request("search_atoms", {
             "domain": "machine_learning",
             "atom_types": ["bounty", "finding"]
         })

@@ -27,9 +27,54 @@ class EmbeddingStressTest:
         self.published_atoms = []
         
     async def create_agent(self, session, agent_id):
-        """Create and register an agent"""
+        """Create and register an agent with proper session management"""
         private_key = ed25519.Ed25519PrivateKey.generate()
         public_key = private_key.public_key()
+        
+        # Initialize MCP session
+        init_payload = {
+            "jsonrpc": "2.0",
+            "method": "initialize",
+            "params": {
+                "protocol_version": "2025-03-26",
+                "capabilities": {
+                    "tools": {},
+                    "resources": {}
+                },
+                "client_info": {
+                    "name": f"embedding-test-agent-{agent_id}",
+                    "version": "1.0.0"
+                }
+            },
+            "id": agent_id * 1000
+        }
+        
+        headers = {
+            "content-type": "application/json",
+            "origin": "http://localhost:3000",
+            "accept": "application/json, text/event-stream"
+        }
+        
+        async with session.post(self.mcp_url, json=init_payload, headers=headers) as response:
+            result = await response.json()
+            if 'result' not in result:
+                return None
+            
+            session_id = result['result'].get('session_id')
+        
+        # Send initialized notification
+        notify_payload = {
+            "jsonrpc": "2.0",
+            "method": "notifications/initialized",
+            "params": {},
+            "id": agent_id * 1000 + 1
+        }
+        
+        notify_headers = headers.copy()
+        notify_headers["mcp-session-id"] = session_id
+        
+        async with session.post(self.mcp_url, json=notify_payload, headers=notify_headers) as response:
+            await response.json()  # We don't care about the response
         
         # Register agent
         reg_payload = {
@@ -38,16 +83,20 @@ class EmbeddingStressTest:
             "params": {
                 "public_key": binascii.hexlify(public_key.public_bytes_raw()).decode()
             },
-            "id": agent_id * 1000
+            "id": agent_id * 1000 + 2
         }
         
-        async with session.post(self.mcp_url, json=reg_payload) as response:
+        reg_headers = headers.copy()
+        reg_headers["mcp-session-id"] = session_id
+        
+        async with session.post(self.mcp_url, json=reg_payload, headers=reg_headers) as response:
             result = await response.json()
             if 'result' in result:
                 agent_info = {
                     'agent_id': result['result']['agent_id'],
                     'challenge': result['result']['challenge'],
-                    'private_key': private_key
+                    'private_key': private_key,
+                    'session_id': session_id
                 }
                 
                 # Confirm agent
@@ -62,15 +111,20 @@ class EmbeddingStressTest:
                         "agent_id": agent_info['agent_id'],
                         "signature": signature_hex
                     },
-                    "id": agent_id * 1000 + 1
+                    "id": agent_id * 1000 + 3
                 }
                 
-                async with session.post(self.mcp_url, json=conf_payload) as conf_response:
-                    conf_result = await conf_response.json()
-                    if 'result' in conf_result and conf_result['result']['status'] == 'confirmed':
+                conf_headers = headers.copy()
+                conf_headers["mcp-session-id"] = session_id
+                
+                async with session.post(self.mcp_url, json=conf_payload, headers=conf_headers) as response:
+                    conf_result = await response.json()
+                    if 'result' in conf_result:
                         return agent_info
-        
-        return None
+                
+                return agent_info
+            else:
+                return None
     
     async def publish_atoms_batch(self, session, agent, batch_size=10):
         """Publish a batch of atoms to stress the embedding queue"""
@@ -135,8 +189,17 @@ class EmbeddingStressTest:
             "id": int(time.time() * 1000) % 1000000
         }
         
+        headers = {
+            "content-type": "application/json",
+            "origin": "http://localhost:3000",
+            "accept": "application/json, text/event-stream"
+        }
+        
+        if agent.get('session_id'):
+            headers["mcp-session-id"] = agent['session_id']
+        
         start_time = time.time()
-        async with session.post(self.mcp_url, json=payload) as response:
+        async with session.post(self.mcp_url, json=payload, headers=headers) as response:
             result = await response.json()
             latency = time.time() - start_time
             

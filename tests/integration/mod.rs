@@ -4,6 +4,8 @@ mod health_tests;
 mod schema_tests;
 mod agent_registration_tests;
 mod coordination_test_fixed;
+mod mcp_lifecycle_tests;
+mod mcp_tools_tests;
 
 use axum::Router;
 use tower::ServiceExt;
@@ -15,6 +17,7 @@ use mote::config::Config;
 use mote::state::AppState;
 use mote::api;
 use mote::db::pool::create_pool;
+use mote::storage::LocalStorage;
 
 /// Test helper that sets up a clean database and returns a router ready for testing
 pub async fn setup_test_app() -> Router {
@@ -53,6 +56,9 @@ pub async fn setup_test_app() -> Router {
             neighbourhood_radius: 0.1,
             summary_llm_endpoint: Some("http://localhost:11434".to_string()),
             summary_llm_model: Some("llama2".to_string()),
+            artifact_storage_path: "./test_artifacts".to_string(),
+            max_artifact_blob_bytes: 1048576,  // 1MB for tests
+            max_artifact_storage_per_agent_bytes: 10485760,  // 10MB for tests
         },
         pheromone: mote::config::PheromoneConfig {
             decay_half_life_hours: 24,
@@ -75,6 +81,9 @@ pub async fn setup_test_app() -> Router {
         acceptance: mote::config::AcceptanceConfig {
             required_provenance_fields: vec!["agent_id".to_string(), "timestamp".to_string()],
         },
+        mcp: mote::config::McpConfig {
+            allowed_origins: vec!["http://localhost:3000".to_string(), "https://localhost:3000".to_string()],
+        },
     };
 
     // Create database pool
@@ -87,15 +96,18 @@ pub async fn setup_test_app() -> Router {
     let (embedding_queue_tx, _embedding_queue_rx) = mpsc::channel(1000);
     let (sse_broadcast_tx, _sse_broadcast_rx) = broadcast::channel(1000);
     
-    let state = AppState::new(pool, Arc::new(config), embedding_queue_tx, sse_broadcast_tx)
-        .await
-        .expect("Failed to create application state");
+    let storage = Arc::new(LocalStorage::new(
+        std::path::PathBuf::from("./test_artifacts")
+    ));
+    
+    let state = AppState::new(pool, Arc::new(config), embedding_queue_tx, sse_broadcast_tx, storage).await
+        .expect("Failed to create app state");
 
     // Build router
     Router::new()
         .route("/health", axum::routing::get(api::handlers::health_check))
         .route("/metrics", axum::routing::get(api::handlers::metrics))
-        .route("/mcp", axum::routing::post(api::mcp::handle_mcp))
+        .route("/mcp", axum::routing::post(api::mcp_server::handle_mcp_request))
         .layer(axum::extract::DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB limit
         .with_state(Arc::new(state))
 }

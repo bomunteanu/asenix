@@ -2,6 +2,9 @@
 name = "mote-hub"
 domain = "research"
 listen_address = "0.0.0.0:3000"
+artifact_storage_path = "./artifacts"
+max_artifact_blob_bytes = 104857600  # 100MB
+max_artifact_storage_per_agent_bytes = 5368709120  # 5GB
 embedding_endpoint = "http://localhost:8080/embed"
 embedding_model = "text-embedding-ada-002"
 embedding_dimension = 1536
@@ -33,3 +36,6 @@ staleness_check_interval_minutes = 30
 
 [acceptance]
 required_provenance_fields = ["code_hash", "environment"]
+
+[mcp]
+allowed_origins = ["http://localhost:3000", "https://localhost:3000"]

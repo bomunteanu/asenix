@@ -1,8 +1,9 @@
 use axum::extract::DefaultBodyLimit;
-use axum::routing::{get, post};
+use axum::routing::{get, post, put, head, delete};
 use axum::Router;
 use clap::Parser;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -16,6 +17,7 @@ mod error;
 mod state;
 mod workers;
 mod acceptance;
+mod storage;
 
 #[derive(Parser)]
 #[command(name = "mote")]
@@ -57,7 +59,14 @@ async fn main() -> anyhow::Result<()> {
     let (embedding_queue_tx, _embedding_queue_rx) = tokio::sync::mpsc::channel(1000);
     let (sse_broadcast_tx, _) = tokio::sync::broadcast::channel(1000);
     
-    let state = state::AppState::new(pool, config.clone(), embedding_queue_tx.clone(), sse_broadcast_tx)
+    // Create storage backend
+    let storage_path = std::path::PathBuf::from(&config.hub.artifact_storage_path);
+    tokio::fs::create_dir_all(&storage_path).await
+        .map_err(|e| anyhow::anyhow!("Failed to create storage directory: {}", e))?;
+    
+    let storage = Arc::new(crate::storage::LocalStorage::new(storage_path));
+    
+    let state = state::AppState::new(pool, config.clone(), embedding_queue_tx.clone(), sse_broadcast_tx, storage)
         .await?;
 
     // Start background workers
@@ -88,7 +97,17 @@ async fn main() -> anyhow::Result<()> {
         .route("/review", get(api::handlers::get_review_queue))
         .route("/review/:id", post(api::handlers::review_atom))
         .route("/events", get(api::sse::sse_events))
-        .route("/mcp", post(api::mcp::handle_mcp))
+        .route("/rpc", post(api::rpc::handle_mcp))
+        .route("/mcp", post(api::mcp_server::handle_mcp_request))
+        .route("/mcp", get(api::mcp_server::handle_mcp_get))
+        .route("/mcp", delete(api::mcp_server::handle_mcp_delete))
+        // Artifact routes
+        .route("/artifacts/:hash", put(api::artifacts::put_artifact))
+        .route("/artifacts/:hash", get(api::artifacts::get_artifact))
+        .route("/artifacts/:hash", head(api::artifacts::head_artifact))
+        .route("/artifacts/:hash/meta", get(api::artifacts::get_artifact_metadata))
+        .route("/artifacts/:hash/ls", get(api::artifacts::list_artifact_tree))
+        .route("/artifacts/:hash/resolve/*path", get(api::artifacts::resolve_artifact_path))
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB limit
         .with_state(std::sync::Arc::new(state.clone()));
 

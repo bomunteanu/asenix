@@ -112,11 +112,39 @@ pub async fn publish_atom(
         &timestamp,
     );
     
+    // Validate artifact_tree_hash if provided
+    if let Some(ref artifact_hash) = atom_input.artifact_tree_hash {
+        // Check if artifact exists and is a tree
+        let artifact_check = sqlx::query(
+            "SELECT type FROM artifacts WHERE hash = $1"
+        )
+        .bind(artifact_hash)
+        .fetch_optional(pool)
+        .await
+        .map_err(MoteError::Database)?;
+
+        match artifact_check {
+            Some(row) => {
+                let artifact_type: String = row.get("type");
+                if artifact_type != "tree" {
+                    return Err(MoteError::Validation(
+                        format!("Artifact {} exists but is not a tree", artifact_hash)
+                    ));
+                }
+            }
+            None => {
+                return Err(MoteError::Validation(
+                    format!("Artifact {} does not exist. Upload the artifact tree first.", artifact_hash)
+                ));
+            }
+        }
+    }
+
     let mut tx = pool.begin().await.map_err(MoteError::Database)?;
     
     sqlx::query(
-        "INSERT INTO atoms (atom_id, type, domain, statement, conditions, metrics, provenance, signature, author_agent_id, created_at, embedding_status, lifecycle, retracted)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), 'pending', 'provisional', false)"
+        "INSERT INTO atoms (atom_id, type, domain, statement, conditions, metrics, provenance, signature, author_agent_id, created_at, embedding_status, lifecycle, retracted, artifact_tree_hash)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), 'pending', 'provisional', false, $10)"
     )
     .bind(&atom_id)
     .bind(atom_input.atom_type.to_string())
@@ -127,6 +155,7 @@ pub async fn publish_atom(
     .bind(&atom_input.provenance)
     .bind(&atom_input.signature)
     .bind(agent_id)
+    .bind(&atom_input.artifact_tree_hash)
     .execute(&mut *tx)
     .await
     .map_err(MoteError::Database)?;
@@ -137,6 +166,19 @@ pub async fn publish_atom(
     // This would require access to the graph cache, which is typically handled at the handler level
     
     Ok(atom_id)
+}
+
+pub async fn get_atom(pool: &PgPool, atom_id: &str) -> Result<Atom> {
+    let row = sqlx::query("SELECT * FROM atoms WHERE atom_id = $1 AND NOT retracted AND NOT archived")
+        .bind(atom_id)
+        .fetch_one(pool)
+        .await
+        .map_err(MoteError::Database)?;
+    
+    let atom: Atom = serde_json::from_value(row.get("atom_data"))
+        .map_err(|e| MoteError::Validation(format!("Failed to deserialize atom: {}", e)))?;
+    
+    Ok(atom)
 }
 
 pub async fn search_atoms(
@@ -223,6 +265,7 @@ pub async fn search_atoms(
             author_agent_id: row.get("author_agent_id"),
             created_at: row.get("created_at"),
             signature: row.get("signature"),
+            artifact_tree_hash: row.get("artifact_tree_hash"),
             confidence: row.get::<f32, _>("confidence") as f64,
             ph_attraction: row.get::<f32, _>("ph_attraction") as f64,
             ph_repulsion: row.get::<f32, _>("ph_repulsion") as f64,
@@ -304,12 +347,13 @@ pub async fn get_synthesis_atoms(
             author_agent_id: row.get("author_agent_id"),
             created_at: row.get("created_at"),
             signature: row.get("signature"),
+            artifact_tree_hash: row.get("artifact_tree_hash"),
             confidence: row.get::<f32, _>("confidence") as f64,
             ph_attraction: row.get::<f32, _>("ph_attraction") as f64,
             ph_repulsion: row.get::<f32, _>("ph_repulsion") as f64,
             ph_novelty: row.get::<f32, _>("ph_novelty") as f64,
             ph_disagreement: row.get::<f32, _>("ph_disagreement") as f64,
-            embedding: None, // Skip embedding decoding for now - search doesn't need it
+            embedding: None, // Skip embedding decoding for now - synthesis doesn't need it
             embedding_status,
             repl_exact: row.get("repl_exact"),
             repl_conceptual: row.get("repl_conceptual"),

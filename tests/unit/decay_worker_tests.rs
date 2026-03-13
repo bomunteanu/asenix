@@ -4,7 +4,7 @@
 //! and proper handling of edge cases.
 
 use mote::workers::decay::DecayStats;
-use mote::config::{Config, PheromoneConfig, HubConfig, TrustConfig, WorkersConfig, AcceptanceConfig};
+use mote::config::{Config, PheromoneConfig, HubConfig, TrustConfig, WorkersConfig, AcceptanceConfig, McpConfig};
 use std::time::Duration;
 
 fn create_test_config() -> Config {
@@ -22,6 +22,9 @@ fn create_test_config() -> Config {
             neighbourhood_radius: 0.5,
             summary_llm_endpoint: None,
             summary_llm_model: None,
+            artifact_storage_path: "./test_artifacts".to_string(),
+            max_artifact_blob_bytes: 1048576,  // 1MB for tests
+            max_artifact_storage_per_agent_bytes: 10485760,  // 10MB for tests
         },
         pheromone: PheromoneConfig {
             decay_half_life_hours: 24,
@@ -43,6 +46,9 @@ fn create_test_config() -> Config {
         },
         acceptance: AcceptanceConfig {
             required_provenance_fields: vec!["agent".to_string(), "timestamp".to_string()],
+        },
+        mcp: McpConfig {
+            allowed_origins: vec!["http://localhost:8080".to_string()],
         },
     }
 }

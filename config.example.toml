@@ -12,6 +12,10 @@ neighbourhood_radius = 0.3
 # Optional LLM for summaries
 # summary_llm_endpoint = "http://localhost:8081/completions"
 # summary_llm_model = "gpt-3.5-turbo"
+# Artifact storage configuration
+artifact_storage_path = "./artifacts"
+max_artifact_blob_bytes = 104857600  # 100MB
+max_artifact_storage_per_agent_bytes = 10737418240  # 10GB
 
 [pheromone]
 decay_half_life_hours = 168
@@ -33,3 +37,6 @@ staleness_check_interval_minutes = 30
 
 [acceptance]
 required_provenance_fields = ["code_hash", "environment"]
+
+[mcp]
+allowed_origins = ["http://localhost:3000", "https://localhost:3000"]

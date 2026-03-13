@@ -1,3 +1,8 @@
 pub mod handlers;
-pub mod mcp;
+pub mod rpc;
+pub mod mcp_server;
+pub mod mcp_session;
+pub mod mcp_tools;
+pub mod mcp_resources;
 pub mod sse;
+pub mod artifacts;
