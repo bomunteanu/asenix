@@ -69,6 +69,23 @@ async fn main() -> anyhow::Result<()> {
     
     let storage = Arc::new(crate::storage::LocalStorage::new(storage_path));
     
+    // Initialize embedding provider (local ONNX or OpenAI API)
+    let embedding_provider = embedding::provider::EmbeddingProvider::from_env()?;
+    let provider_dim = embedding_provider.dimension();
+    let config_dim = config.hub.embedding_dimension;
+    if provider_dim != config_dim {
+        anyhow::bail!(
+            "Embedding dimension mismatch: provider '{}' produces {} dims but config.toml \
+             has embedding_dimension = {}. Update config.toml to match.",
+            embedding_provider.name(), provider_dim, config_dim
+        );
+    }
+    tracing::info!(
+        "Embedding provider '{}' ready — {} dimensions",
+        embedding_provider.name(), provider_dim
+    );
+    let embedding_provider = Arc::new(embedding_provider);
+
     let state = state::AppState::new(pool, config.clone(), embedding_queue_tx.clone(), sse_broadcast_tx, storage)
         .await?;
 
@@ -78,6 +95,7 @@ async fn main() -> anyhow::Result<()> {
         (*state.config).clone(),
         state.graph_cache.clone(),
         state.condition_registry.clone(),
+        embedding_provider,
     );
     
     let claims_worker = workers::claims::ClaimsExpiryWorker::new(state.pool.clone());

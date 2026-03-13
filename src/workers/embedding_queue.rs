@@ -3,7 +3,9 @@ use crate::domain::atom::AtomType;
 use crate::domain::pheromone::*;
 use crate::domain::condition::ConditionRegistry;
 use crate::db::graph_cache::{GraphCache, EdgeType};
+use crate::embedding::provider::EmbeddingProvider;
 use crate::error::{MoteError, Result};
+use pgvector::Vector;
 use sqlx::{PgPool, Row};
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,6 +18,7 @@ pub struct EmbeddingQueue {
     config: Config,
     graph_cache: Arc<RwLock<GraphCache>>,
     condition_registry: Arc<RwLock<ConditionRegistry>>,
+    provider: Arc<EmbeddingProvider>,
 }
 
 impl EmbeddingQueue {
@@ -24,12 +27,14 @@ impl EmbeddingQueue {
         config: Config,
         graph_cache: Arc<RwLock<GraphCache>>,
         condition_registry: Arc<RwLock<ConditionRegistry>>,
+        provider: Arc<EmbeddingProvider>,
     ) -> Self {
         Self {
             pool,
             config,
             graph_cache,
             condition_registry,
+            provider,
         }
     }
 
@@ -100,10 +105,11 @@ impl EmbeddingQueue {
         let embedding = self.generate_embedding(atom_id).await?;
         
         // Step 2: Update atom with embedding
+        let pg_vector = Vector::from(embedding.clone());
         sqlx::query(
             "UPDATE atoms SET embedding = $1, embedding_status = 'ready' WHERE atom_id = $2"
         )
-        .bind(&embedding)
+        .bind(&pg_vector)
         .bind(atom_id)
         .execute(&self.pool)
         .await?;
@@ -217,29 +223,31 @@ impl EmbeddingQueue {
 
         Ok(())
     }
-    async fn generate_embedding(&self, atom_id: &str) -> Result<Vec<f64>> {
-        // This would call the actual embedding service
-        // For MVP, generate a simple deterministic embedding based on atom_id
-        let dimension = self.config.hub.embedding_dimension;
-        let mut embedding = vec![0.0; dimension];
-        
-        // Simple hash-based embedding for testing
-        use std::collections::hash_map::DefaultHasher;
-        use std::hash::{Hash, Hasher};
-        
-        let mut hasher = DefaultHasher::new();
-        atom_id.hash(&mut hasher);
-        let hash = hasher.finish();
-        
-        for (i, val) in embedding.iter_mut().enumerate() {
-            *val = ((hash >> (i % 8)) as f64 / u64::MAX as f64) * 2.0 - 1.0;
+    async fn generate_embedding(&self, atom_id: &str) -> Result<Vec<f32>> {
+        // Fetch the atom's statement text for embedding
+        let statement: String = sqlx::query_scalar(
+            "SELECT statement FROM atoms WHERE atom_id = $1"
+        )
+        .bind(atom_id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let embedding = self.provider.encode(&statement).await?;
+
+        // Validate dimension matches config
+        let expected = self.config.hub.embedding_dimension;
+        if embedding.len() != expected {
+            return Err(MoteError::Internal(format!(
+                "Embedding dimension mismatch: provider returned {} but config expects {}",
+                embedding.len(), expected
+            )));
         }
-        
+
         Ok(embedding)
     }
 
     /// Update pheromone values for the neighbourhood of a newly embedded atom
-    async fn update_pheromone_neighbourhood(&self, atom_id: &str, embedding: &[f64]) -> Result<()> {
+    async fn update_pheromone_neighbourhood(&self, atom_id: &str, embedding: &[f32]) -> Result<()> {
         // Load the new atom's data
         let atom_row = sqlx::query(
             "SELECT type, domain, conditions, metrics, ph_attraction, ph_repulsion, ph_novelty, ph_disagreement
@@ -359,7 +367,8 @@ impl EmbeddingQueue {
     }
 
     /// Find atoms within neighbourhood radius of the given embedding
-    async fn find_neighbours(&self, embedding: &[f64], domain: &str) -> Result<Vec<NeighbourInfo>> {
+    async fn find_neighbours(&self, embedding: &[f32], domain: &str) -> Result<Vec<NeighbourInfo>> {
+        let pg_vector = Vector::from(embedding.to_vec());
         let rows = sqlx::query(
             "SELECT atom_id, ph_attraction, ph_repulsion, metrics
              FROM atoms 
@@ -370,17 +379,19 @@ impl EmbeddingQueue {
              AND embedding <=> $2 < $3"
         )
         .bind(domain)
-        .bind(embedding)
+        .bind(&pg_vector)
         .bind(self.config.hub.neighbourhood_radius)
         .fetch_all(&self.pool)
         .await?;
 
         let mut neighbours = Vec::new();
         for row in rows {
+            let ph_attraction: f32 = row.get("ph_attraction");
+            let ph_repulsion: f32 = row.get("ph_repulsion");
             neighbours.push(NeighbourInfo {
                 atom_id: row.get("atom_id"),
-                ph_attraction: row.get("ph_attraction"),
-                ph_repulsion: row.get("ph_repulsion"),
+                ph_attraction: ph_attraction as f64,
+                ph_repulsion: ph_repulsion as f64,
                 metrics: row.get("metrics"),
             });
         }
@@ -600,7 +611,7 @@ impl EmbeddingQueue {
             // batch update using unnest or similar
             for (field, value) in field_updates {
                 sqlx::query(&format!("UPDATE atoms SET {} = $1 WHERE atom_id = $2", field))
-                    .bind(value)
+                    .bind(value as f32)
                     .bind(&atom_id)
                     .execute(&self.pool)
                     .await?;
