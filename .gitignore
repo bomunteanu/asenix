@@ -9,6 +9,7 @@ test_report.json
 **/test_report.json
 
 tests/mcp-py-tests/__pycache__/
+__pycache__/
 
 # IDE
 .vscode/
@@ -16,6 +17,7 @@ tests/mcp-py-tests/__pycache__/
 *.swp
 *.swo
 *~
+.claude/
 
 # OS
 .DS_Store
