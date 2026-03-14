@@ -89,7 +89,7 @@ async fn test_mcp_tools_list() {
     let response_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     
     let tools = response_json.get("result").unwrap().get("tools").unwrap().as_array().unwrap();
-    assert_eq!(tools.len(), 10);
+    assert_eq!(tools.len(), 14);
 
     // Check specific tools exist
     let tool_names: Vec<String> = tools.iter()

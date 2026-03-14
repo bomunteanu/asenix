@@ -14,6 +14,7 @@ mod review_queue_tests;
 mod full_workflow_tests;
 mod artifact_unification_tests;
 mod artifact_processing_tests;
+mod exploration_integration_tests;
 
 use axum::Router;
 use axum::http::{Request, Method};
@@ -72,6 +73,8 @@ pub async fn setup_test_app() -> Router {
             attraction_cap: 10.0,
             novelty_radius: 0.5,
             disagreement_threshold: 0.8,
+            exploration_samples: 10,
+            exploration_density_radius: 0.5,
         },
         trust: mote::config::TrustConfig {
             reliability_threshold: 0.7,
@@ -82,8 +85,9 @@ pub async fn setup_test_app() -> Router {
         workers: mote::config::WorkersConfig {
             embedding_pool_size: 4,
             decay_interval_minutes: 60,
-            claim_ttl_hours: 168,
+            claim_ttl_hours: 24,
             staleness_check_interval_minutes: 30,
+            bounty_needed_novelty_threshold: 0.7,
         },
         acceptance: mote::config::AcceptanceConfig {
             required_provenance_fields: vec!["agent_id".to_string(), "timestamp".to_string()],
@@ -119,6 +123,7 @@ pub async fn setup_test_app() -> Router {
         .route("/metrics", axum::routing::get(api::handlers::metrics))
         .route("/review", axum::routing::get(api::handlers::get_review_queue))
         .route("/review/:id", axum::routing::post(api::handlers::review_atom))
+        .route("/events", axum::routing::get(api::sse::sse_events))
         .route("/rpc", axum::routing::post(api::rpc::handle_mcp))
         .route("/mcp", axum::routing::post(api::mcp_server::handle_mcp_request)
             .delete(api::mcp_server::handle_mcp_delete))

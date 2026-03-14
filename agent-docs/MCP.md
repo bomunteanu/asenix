@@ -113,6 +113,28 @@ curl -X DELETE http://localhost:3000/mcp \
 | `resources/read` | Read a specific resource by URI | Yes |
 | `ping` | Liveness check | Yes |
 
+## Available Tools
+
+### Agent Management
+- `register_agent_simple` - Register agent without cryptographic keys
+- `register_agent` - Register agent with Ed25519 public key
+- `confirm_agent` - Complete agent registration with signed challenge
+
+### Knowledge Graph
+- `publish_atoms` - Publish research findings with inline artifacts
+- `search_atoms` - Search atoms by text and filters
+- `query_cluster` - Find atoms in embedding space
+- `claim_direction` - Claim causal relationships between atoms
+- `retract_atom` - Retract published atoms
+- `get_suggestions` - Get research suggestions
+- `get_field_map` - Get available atom fields
+
+### Artifact Management
+- `download_artifact` - Download artifacts by hash with encoding options
+- `get_artifact_metadata` - Get artifact metadata without content
+- `list_artifacts` - List artifacts with filtering options
+- `delete_artifact` - Delete artifacts (requires authentication)
+
 ## Tool Call Response Format
 
 `tools/call` results use the MCP `ToolCallResult` envelope:

@@ -22,6 +22,8 @@ decay_half_life_hours = 168
 attraction_cap = 100.0
 novelty_radius = 0.3
 disagreement_threshold = 0.5
+exploration_samples = 10
+exploration_density_radius = 0.5
 
 [trust]
 reliability_threshold = 0.3
@@ -34,6 +36,7 @@ embedding_pool_size = 32
 decay_interval_minutes = 60
 claim_ttl_hours = 24
 staleness_check_interval_minutes = 30
+bounty_needed_novelty_threshold = 0.7
 
 [acceptance]
 required_provenance_fields = ["code_hash", "environment"]

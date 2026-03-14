@@ -36,6 +36,8 @@ pub struct PheromoneConfig {
     pub attraction_cap: f64,
     pub novelty_radius: f64,
     pub disagreement_threshold: f64,
+    pub exploration_samples: u32,
+    pub exploration_density_radius: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,6 +54,7 @@ pub struct WorkersConfig {
     pub decay_interval_minutes: u64,
     pub claim_ttl_hours: u64,
     pub staleness_check_interval_minutes: u64,
+    pub bounty_needed_novelty_threshold: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,6 +106,15 @@ impl Config {
         }
         if self.pheromone.disagreement_threshold < 0.0 || self.pheromone.disagreement_threshold > 1.0 {
             anyhow::bail!("disagreement_threshold must be between 0.0 and 1.0");
+        }
+        if self.pheromone.exploration_samples == 0 {
+            anyhow::bail!("exploration_samples must be > 0");
+        }
+        if self.pheromone.exploration_density_radius <= 0.0 || self.pheromone.exploration_density_radius > 2.0 {
+            anyhow::bail!("exploration_density_radius must be between 0.0 and 2.0");
+        }
+        if self.workers.bounty_needed_novelty_threshold < 0.0 || self.workers.bounty_needed_novelty_threshold > 1.0 {
+            anyhow::bail!("bounty_needed_novelty_threshold must be between 0.0 and 1.0");
         }
         
         Ok(())

@@ -12,15 +12,15 @@ Welcome to the Mote documentation! This guide will help you navigate through the
 
 ### 📖 Core Concepts
 - **[MANIFESTO.md](./MANIFESTO.md)** - System design principles and architecture specification
-- **[API.md](./API.md)** - Complete API reference (RPC methods, SSE events, artifact storage, error codes)
+- **[API.md](./API.md)** - Complete API reference (RPC methods, SSE events, error codes)
 - **[MCP.md](./MCP.md)** - Model Context Protocol session-based endpoint guide
+- **[ARTIFACTS.md](./ARTIFACTS.md)** - Unified artifact management system (MCP integration)
 
 ### 🧪 Testing & Quality
 - **[TESTING.md](./TESTING.md)** - Testing guide and load testing procedures
 
 ### 🚀 Deployment & Operations
 - **[DEPLOYMENT.md](./DEPLOYMENT.md)** - Production deployment guide (Docker, Kubernetes, Cloud)
-- **[ARTIFACTS.md](./ARTIFACTS.md)** - Artifact storage system documentation
 
 ### 📁 Archive (Historical)
 - **[archive/](./archive/)** - Previous phase implementation documentation (gitignored)

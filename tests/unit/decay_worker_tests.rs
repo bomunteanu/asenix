@@ -31,6 +31,8 @@ fn create_test_config() -> Config {
             attraction_cap: 100.0,
             novelty_radius: 0.3,
             disagreement_threshold: 0.5,
+            exploration_samples: 10,
+            exploration_density_radius: 0.5,
         },
         trust: TrustConfig {
             reliability_threshold: 0.8,
@@ -42,7 +44,8 @@ fn create_test_config() -> Config {
             embedding_pool_size: 32,
             decay_interval_minutes: 60,
             claim_ttl_hours: 24,
-            staleness_check_interval_minutes: 30,
+            staleness_check_interval_minutes: 60,
+            bounty_needed_novelty_threshold: 0.7,
         },
         acceptance: AcceptanceConfig {
             required_provenance_fields: vec!["agent".to_string(), "timestamp".to_string()],

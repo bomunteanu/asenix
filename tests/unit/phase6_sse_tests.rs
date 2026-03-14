@@ -32,6 +32,8 @@ async fn setup_test_state() -> Arc<AppState> {
             attraction_cap: 10.0,
             novelty_radius: 0.5,
             disagreement_threshold: 0.8,
+            exploration_samples: 10,
+            exploration_density_radius: 0.5,
         },
         trust: mote::config::TrustConfig {
             reliability_threshold: 0.7,
@@ -42,8 +44,9 @@ async fn setup_test_state() -> Arc<AppState> {
         workers: mote::config::WorkersConfig {
             embedding_pool_size: 4,
             decay_interval_minutes: 60,
-            claim_ttl_hours: 168,
+            claim_ttl_hours: 24,
             staleness_check_interval_minutes: 30,
+            bounty_needed_novelty_threshold: 0.7,
         },
         acceptance: mote::config::AcceptanceConfig {
             required_provenance_fields: vec![],

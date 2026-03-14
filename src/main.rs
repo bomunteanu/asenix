@@ -2,7 +2,7 @@
 #![allow(clippy::redundant_pattern_matching, clippy::should_implement_trait)]
 
 use axum::extract::DefaultBodyLimit;
-use axum::routing::{get, post, put, head, delete};
+use axum::routing::{get, post, put, head};
 use axum::Router;
 use clap::Parser;
 use std::path::PathBuf;
@@ -102,6 +102,7 @@ async fn main() -> anyhow::Result<()> {
     let staleness_worker = workers::staleness::StalenessWorker::new(
         state.pool.clone(),
         state.config.hub.neighbourhood_radius,
+        state.config.workers.bounty_needed_novelty_threshold,
         state.sse_broadcast_tx.clone(),
     );
 
@@ -120,9 +121,9 @@ async fn main() -> anyhow::Result<()> {
         .route("/review/:id", post(api::handlers::review_atom))
         .route("/events", get(api::sse::sse_events))
         .route("/rpc", post(api::rpc::handle_mcp))
-        .route("/mcp", post(api::mcp_server::handle_mcp_request))
-        .route("/mcp", get(api::mcp_server::handle_mcp_get))
-        .route("/mcp", delete(api::mcp_server::handle_mcp_delete))
+        .route("/mcp", post(api::mcp_server::handle_mcp_request)
+            .get(api::mcp_server::handle_mcp_get)
+            .delete(api::mcp_server::handle_mcp_delete))
         // Artifact routes
         .route("/artifacts/:hash", put(api::artifacts::put_artifact))
         .route("/artifacts/:hash", get(api::artifacts::get_artifact))
@@ -141,8 +142,6 @@ async fn main() -> anyhow::Result<()> {
         .with_graceful_shutdown(shutdown_signal(
             embedding_queue_tx,
             embedding_handle,
-            claims_handle,
-            staleness_handle,
         ))
         .await?;
 
@@ -153,29 +152,25 @@ async fn main() -> anyhow::Result<()> {
 async fn shutdown_signal(
     embedding_queue_tx: tokio::sync::mpsc::Sender<String>,
     mut embedding_handle: tokio::task::JoinHandle<()>,
-    claims_handle: tokio::task::JoinHandle<()>,
-    staleness_handle: tokio::task::JoinHandle<()>,
 ) {
-    let ctrl_c = async {
-        tokio::signal::ctrl_c()
-            .await
-            .expect("failed to install Ctrl+C handler");
-    };
-
     #[cfg(unix)]
-    let terminate = async {
-        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .expect("failed to install signal handler")
-            .recv()
-            .await;
-    };
-
-    #[cfg(not(unix))]
-    let terminate = std::future::pending::<()>();
-
-    tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
+    {
+        use tokio::signal::unix::{signal, SignalKind};
+        let mut terminate = signal(SignalKind::terminate()).unwrap();
+        let mut quit = signal(SignalKind::quit()).unwrap();
+        let mut interrupt = signal(SignalKind::interrupt()).unwrap();
+        
+        tokio::select! {
+            _ = terminate.recv() => {},
+            _ = quit.recv() => {},
+            _ = interrupt.recv() => {},
+        }
+    }
+    #[cfg(windows)]
+    {
+        use tokio::signal::windows;
+        let mut shutdown = windows::shutdown().unwrap();
+        let _ = shutdown.recv().await;
     }
 
     tracing::info!("Shutdown signal received, starting graceful shutdown");
@@ -198,11 +193,10 @@ async fn shutdown_signal(
         }
     }
 
-    // Step 4: Cancel background workers
-    tracing::info!("Cancelling background workers...");
-    claims_handle.abort();
-    staleness_handle.abort();
+    // Step 4: Cancel background workers (they will be cleaned up automatically)
+    tracing::info!("Background workers will be cleaned up automatically");
 
     // Step 5: Close database pool (handled by Drop implementation)
     tracing::info!("Graceful shutdown sequence completed");
 }
+

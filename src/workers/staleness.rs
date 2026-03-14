@@ -9,6 +9,7 @@ pub struct StalenessWorker {
     pool: PgPool,
     neighbourhood_radius: f64,
     staleness_threshold: usize,
+    bounty_threshold: f64,
     sse_tx: broadcast::Sender<SseEvent>,
 }
 
@@ -16,12 +17,14 @@ impl StalenessWorker {
     pub fn new(
         pool: PgPool,
         neighbourhood_radius: f64,
+        bounty_threshold: f64,
         sse_tx: broadcast::Sender<SseEvent>,
     ) -> Self {
         Self {
             pool,
             neighbourhood_radius,
             staleness_threshold: 20,
+            bounty_threshold,
             sse_tx,
         }
     }
@@ -80,6 +83,33 @@ impl StalenessWorker {
         Ok(stale_count)
     }
 
+    /// Run bounty check and emit bounty_needed events
+    pub async fn run_bounty_check(&self, threshold: f64) -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
+        // Get domain novelty statistics
+        let domain_stats = crate::db::queries::get_domain_novelty_stats(&self.pool).await?;
+        
+        let mut bounty_count = 0;
+        
+        for (domain, mean_novelty) in domain_stats {
+            if mean_novelty > threshold {
+                info!(
+                    "High novelty detected in domain {}: mean_novelty={:.3} (threshold: {:.3})",
+                    domain, mean_novelty, threshold
+                );
+                
+                // Emit bounty_needed event
+                self.emit_bounty_needed_event(&domain, mean_novelty);
+                bounty_count += 1;
+            }
+        }
+
+        if bounty_count > 0 {
+            info!("Detected {} domains needing bounties", bounty_count);
+        }
+
+        Ok(bounty_count)
+    }
+
     /// Emit synthesis_needed event to the SSE broadcast channel.
     fn emit_synthesis_needed_event(&self, cluster_center: &[f64], atom_count: usize) {
         let event = SseEvent {
@@ -99,6 +129,26 @@ impl StalenessWorker {
         );
     }
 
+    /// Emit bounty_needed event to the SSE broadcast channel.
+    fn emit_bounty_needed_event(&self, domain: &str, mean_novelty: f64) {
+        let event = SseEvent {
+            event_type: "bounty_needed".to_string(),
+            data: serde_json::json!({
+                "type": "bounty_needed",
+                "domain": domain,
+                "mean_novelty": mean_novelty,
+                "timestamp": chrono::Utc::now().to_rfc3339()
+            }),
+            timestamp: chrono::Utc::now(),
+        };
+        // SendError only occurs when there are no receivers — safe to ignore.
+        let _ = self.sse_tx.send(event);
+        debug!(
+            "Emitted bounty_needed event: domain={}, mean_novelty={}",
+            domain, mean_novelty
+        );
+    }
+
     /// Start the periodic staleness worker
     pub async fn start(self, interval_minutes: u64) {
         let mut interval = tokio::time::interval(Duration::from_secs(interval_minutes * 60));
@@ -106,6 +156,7 @@ impl StalenessWorker {
         loop {
             tokio::select! {
                 _ = interval.tick() => {
+                    // Run staleness check
                     match self.run_staleness_check().await {
                         Ok(stale_count) => {
                             if stale_count > 0 {
@@ -114,6 +165,18 @@ impl StalenessWorker {
                         }
                         Err(e) => {
                             error!("Staleness check failed: {}", e);
+                        }
+                    }
+                    
+                    // Run bounty check
+                    match self.run_bounty_check(self.bounty_threshold).await {
+                        Ok(bounty_count) => {
+                            if bounty_count > 0 {
+                                info!("Bounty check completed: {} domains need bounties", bounty_count);
+                            }
+                        }
+                        Err(e) => {
+                            error!("Bounty check failed: {}", e);
                         }
                     }
                 }

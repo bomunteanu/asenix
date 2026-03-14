@@ -454,6 +454,7 @@ pub async fn call_tool(
             rpc::handle_retract_atom(state, Some(arguments.clone())).await
         }
         "get_suggestions" => {
+            tracing::info!("MCP get_suggestions called with arguments: {}", serde_json::to_string(&arguments).unwrap_or_default());
             rpc::handle_get_suggestions(state, Some(arguments.clone())).await
         }
         "get_field_map" => {

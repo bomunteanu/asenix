@@ -74,12 +74,11 @@ pub struct Content {
 }
 
 fn generate_session_id() -> String {
-    use rand::RngCore;
+    use rand::{RngCore, SeedableRng};
 
     let mut hasher = blake3::Hasher::new();
-    let mut rng = rand::rng();
     let mut random_bytes = [0u8; 32];
-    rng.fill_bytes(&mut random_bytes);
+    rand::rngs::StdRng::from_os_rng().fill_bytes(&mut random_bytes);
     hasher.update(&random_bytes);
     hex::encode(hasher.finalize().as_bytes())
 }
@@ -223,17 +222,19 @@ pub async fn handle_mcp_request(
     body: String,
 ) -> std::result::Result<Response, (StatusCode, String)> {
     let allowed_origins: Vec<&str> = state.config.mcp.allowed_origins.iter().map(String::as_str).collect();
-    validate_origin(&headers, &allowed_origins)?;
-    validate_post_accept_header(&headers)?;
+    if let Err((status, msg)) = validate_origin(&headers, &allowed_origins) {
+        return Err((status, msg));
+    }
+    if let Err((status, msg)) = validate_post_accept_header(&headers) {
+        return Err((status, msg));
+    }
 
     let request: Value = match serde_json::from_str(&body) {
         Ok(value) => value,
         Err(_) => {
-            return Ok(jsonrpc_error_response(
+            return Err((
                 StatusCode::BAD_REQUEST,
-                None,
-                -32700,
-                "Parse error",
+                jsonrpc_error_body(None, -32700, "Parse error").to_string()
             ));
         }
     };

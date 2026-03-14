@@ -37,7 +37,7 @@ pub struct JsonRpcError {
 pub async fn handle_mcp(
     State(state): State<Arc<AppState>>,
     body: String,
-) -> std::result::Result<Json<JsonRpcResponse>, (axum::http::StatusCode, String)> {
+) -> std::result::Result<Json<Value>, (axum::http::StatusCode, String)> {
     let request_id = Uuid::new_v4().to_string();
     
     // Parse JSON body
@@ -57,19 +57,18 @@ pub async fn handle_mcp(
 
     // Check if this is a batch request (not supported)
     if request_value.is_array() {
-        return Ok(Json(JsonRpcResponse {
-            jsonrpc: "2.0".to_string(),
-            result: None,
-            error: Some(JsonRpcError {
-                code: -32700,
-                message: "Batch requests not supported".to_string(),
-                data: Some(json!({
+        return Ok(Json(json!({
+            "jsonrpc": "2.0",
+            "error": {
+                "code": -32700,
+                "message": "Batch requests not supported",
+                "data": {
                     "request_id": request_id,
                     "timestamp": chrono::Utc::now().to_rfc3339()
-                })),
-            }),
-            id: None,
-        }));
+                }
+            },
+            "id": null
+        })));
     }
 
     // Parse single request
@@ -89,19 +88,18 @@ pub async fn handle_mcp(
 
     // Validate JSON-RPC version
     if request.jsonrpc != "2.0" {
-        return Ok(Json(JsonRpcResponse {
-            jsonrpc: "2.0".to_string(),
-            result: None,
-            error: Some(JsonRpcError {
-                code: -32600,
-                message: "Invalid JSON-RPC version".to_string(),
-                data: Some(json!({
+        return Ok(Json(json!({
+            "jsonrpc": "2.0",
+            "error": {
+                "code": -32600,
+                "message": "Invalid JSON-RPC version",
+                "data": {
                     "request_id": request_id,
                     "timestamp": chrono::Utc::now().to_rfc3339()
-                })),
-            }),
-            id: request.id,
-        }));
+                }
+            },
+            "id": request.id
+        })));
     }
 
     // Dispatch to method handler
@@ -121,39 +119,25 @@ pub async fn handle_mcp(
 
     // Format response
     match result {
-        Ok(result_value) => Ok(Json(JsonRpcResponse {
-            jsonrpc: "2.0".to_string(),
-            result: Some(result_value),
-            error: None,
-            id: request.id,
-        })),
-        Err(error) => Ok(Json(JsonRpcResponse {
-            jsonrpc: "2.0".to_string(),
-            result: None,
-            error: Some(JsonRpcError {
-                code: error.json_rpc_code(),
-                message: error.to_string(),
-                data: Some(json!({
+        Ok(result_value) => Ok(Json(json!({
+            "jsonrpc": "2.0",
+            "result": result_value,
+            "error": null,
+            "id": request.id
+        }))),
+        Err(error) => Ok(Json(json!({
+            "jsonrpc": "2.0",
+            "result": null,
+            "error": {
+                "code": error.json_rpc_code(),
+                "message": error.to_string(),
+                "data": {
                     "request_id": request_id,
                     "timestamp": chrono::Utc::now().to_rfc3339(),
-                    "error_type": match error {
-                        MoteError::RateLimit => "rate_limit",
-                        MoteError::Authentication(_) => "authentication",
-                        MoteError::Validation(_) => "validation",
-                        MoteError::NotFound(_) => "not_found",
-                        MoteError::Conflict(_) => "conflict",
-                        MoteError::ExternalService(_) => "external_service",
-                        MoteError::Internal(_) => "internal",
-                        MoteError::Database(_) => "database",
-                        MoteError::Serialization(_) => "serialization",
-                        MoteError::Configuration(_) => "configuration",
-                        MoteError::Cryptography(_) => "cryptography",
-                        MoteError::Storage(_) => "storage",
-                    }
-                })),
-            }),
-            id: request.id,
-        })),
+                }
+            },
+            "id": request.id
+        }))),
     }
 }
 
@@ -777,8 +761,70 @@ pub async fn handle_get_suggestions(
     // Extract optional filters
     let domain_filter: Option<String> = serde_json::from_value(params["domain"].clone()).ok();
     let limit: i64 = serde_json::from_value(params["limit"].clone()).unwrap_or(10);
+    let include_exploration: bool = serde_json::from_value(params["include_exploration"].clone()).unwrap_or(false);
     
-    // Query atoms with highest pheromone attraction (suggesting high novelty/disagreement)
+    // Debug logging
+    tracing::info!("get_suggestions called with domain_filter={:?}, limit={}, include_exploration={}", 
+                   domain_filter, limit, include_exploration);
+    tracing::info!("Raw params: {}", serde_json::to_string(&params).unwrap_or_default());
+    
+    let mut all_suggestions = Vec::new();
+    
+    // Always get pheromone-based suggestions
+    let pheromone_suggestions = get_pheromone_suggestions(&state.pool, &domain_filter, limit).await?;
+    all_suggestions.extend(pheromone_suggestions);
+    
+    // Add exploration suggestions if requested
+    if include_exploration {
+        tracing::info!("Adding exploration suggestions...");
+        let exploration_suggestions = get_exploration_suggestions(
+            state, 
+            &domain_filter, 
+            limit
+        ).await?;
+        let exploration_count = exploration_suggestions.len();
+        all_suggestions.extend(exploration_suggestions);
+        tracing::info!("Added {} exploration suggestions", exploration_count);
+    } else {
+        tracing::info!("Exploration mode not requested");
+    }
+    
+    // Determine strategy
+    let strategy = if include_exploration {
+        "pheromone_attraction_plus_exploration"
+    } else {
+        "pheromone_attraction"
+    };
+    
+    tracing::info!("Final strategy: {}", strategy);
+    
+    let description = if include_exploration {
+        "Atoms ranked by pheromone attraction plus exploration sampling (high novelty/disagreement potential)"
+    } else {
+        "Atoms ranked by pheromone attraction (high novelty/disagreement potential)"
+    };
+    
+    // Add debug info to response
+    let debug_info = json!({
+        "debug_include_exploration": include_exploration,
+        "debug_domain_filter": domain_filter,
+        "debug_limit": limit,
+        "debug_all_suggestions_count": all_suggestions.len()
+    });
+    
+    Ok(json!({ 
+        "suggestions": all_suggestions,
+        "strategy": strategy,
+        "description": description,
+        "debug": debug_info
+    }))
+}
+
+pub async fn get_pheromone_suggestions(
+    pool: &sqlx::PgPool,
+    domain_filter: &Option<String>,
+    limit: i64,
+) -> Result<Vec<Value>> {
     let rows = if let Some(domain) = domain_filter {
         sqlx::query(
             "SELECT atom_id, type, domain, statement, conditions, metrics, 
@@ -790,9 +836,9 @@ pub async fn handle_get_suggestions(
              ORDER BY ph_attraction DESC, ph_novelty DESC 
              LIMIT $2"
         )
-        .bind(&domain)
+        .bind(domain)
         .bind(limit)
-        .fetch_all(&state.pool)
+        .fetch_all(pool)
         .await
         .map_err(MoteError::Database)?
     } else {
@@ -806,7 +852,7 @@ pub async fn handle_get_suggestions(
              LIMIT $1"
         )
         .bind(limit)
-        .fetch_all(&state.pool)
+        .fetch_all(pool)
         .await
         .map_err(MoteError::Database)?
     };
@@ -821,6 +867,7 @@ pub async fn handle_get_suggestions(
             "statement": row.get::<String, _>("statement"),
             "conditions": row.get::<serde_json::Value, _>("conditions"),
             "metrics": row.get::<Option<serde_json::Value>, _>("metrics"),
+            "source": "pheromone",
             "pheromone": {
                 "attraction": row.get::<f32, _>("ph_attraction"),
                 "repulsion": row.get::<f32, _>("ph_repulsion"),
@@ -832,11 +879,81 @@ pub async fn handle_get_suggestions(
         suggestions.push(suggestion);
     }
     
-    Ok(json!({ 
-        "suggestions": suggestions,
-        "strategy": "pheromone_attraction",
-        "description": "Atoms ranked by pheromone attraction (high novelty/disagreement potential)"
-    }))
+    Ok(suggestions)
+}
+
+pub async fn get_exploration_suggestions(
+    state: &crate::state::AppState,
+    _domain_filter: &Option<String>,
+    limit: i64,
+) -> Result<Vec<Value>> {
+    use rand::Rng;
+    
+    let exploration_samples = state.config.pheromone.exploration_samples;
+    let exploration_radius = state.config.pheromone.exploration_density_radius;
+    let embedding_dimension = state.config.hub.embedding_dimension;
+    
+    let mut exploration_suggestions = Vec::new();
+    
+    for _ in 0..exploration_samples {
+        // Generate random unit vector — rng scoped to block so it drops before .await below
+        let random_vector: Vec<f32> = {
+            use rand::SeedableRng;
+            let mut rng = rand::rngs::StdRng::from_os_rng();
+            (0..embedding_dimension)
+                .map(|_| rng.random_range(-1.0f32..1.0f32))
+                .collect()
+        };
+        
+        // Normalize to unit vector
+        let norm: f32 = random_vector.iter().map(|x| x * x).sum::<f32>().sqrt();
+        if norm > 0.0 {
+            let unit_vector: Vec<f32> = random_vector.iter().map(|x| x / norm).collect();
+            
+            // Query nearest atom with density
+            if let Ok((Some(nearest_atom), atom_count)) = crate::db::queries::query_nearest_atom_with_density(
+                &state.pool,
+                unit_vector,
+                exploration_radius
+            ).await {
+                // Compute novelty score
+                let novelty = 1.0 / (1.0 + atom_count as f64);
+                
+                // Only include if novelty is meaningful
+                if novelty > 0.5 {
+                    let suggestion = json!({
+                        "atom_id": nearest_atom.atom_id,
+                        "atom_type": nearest_atom.atom_type.to_string(),
+                        "domain": nearest_atom.domain,
+                        "statement": nearest_atom.statement,
+                        "conditions": nearest_atom.conditions,
+                        "metrics": nearest_atom.metrics,
+                        "source": "exploration",
+                        "novelty": novelty,
+                        "atom_count": atom_count,
+                        "pheromone": {
+                            "attraction": nearest_atom.ph_attraction,
+                            "repulsion": nearest_atom.ph_repulsion,
+                            "novelty": nearest_atom.ph_novelty,
+                            "disagreement": nearest_atom.ph_disagreement
+                        }
+                    });
+                    
+                    exploration_suggestions.push(suggestion);
+                }
+            }
+        }
+    }
+    
+    // Sort by novelty descending and limit
+    exploration_suggestions.sort_by(|a, b| {
+        let novelty_a = a["novelty"].as_f64().unwrap_or(0.0);
+        let novelty_b = b["novelty"].as_f64().unwrap_or(0.0);
+        novelty_b.partial_cmp(&novelty_a).unwrap_or(std::cmp::Ordering::Equal)
+    });
+    
+    exploration_suggestions.truncate(limit as usize);
+    Ok(exploration_suggestions)
 }
 
 pub async fn handle_get_field_map(

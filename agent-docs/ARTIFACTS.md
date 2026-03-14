@@ -1,19 +1,20 @@
-# Artifact Storage System
+# Artifact Management System (Unified)
 
 ## Overview
 
-Mote's artifact storage system provides **content-addressed storage** for research artifacts, enabling reproducible and verifiable research workflows. Artifacts are stored using BLAKE3 hashes as identifiers, ensuring data integrity and deduplication.
+Mote's artifact management system provides **unified artifact handling** directly within the MCP protocol. Artifacts are now uploaded inline with atom creation and managed through MCP tools, eliminating the need for separate HTTP uploads. The system uses content-addressed storage with BLAKE3 hashes for data integrity and deduplication.
 
 ## 🎯 Key Features
 
-- **Content-Addressed Storage**: Files are identified by their cryptographic hash (BLAKE3)
+- **Inline Artifact Upload**: Upload artifacts directly within `publish_atoms` requests
+- **MCP Tool Integration**: Complete artifact management via MCP tools
+- **Content-Addressed Storage**: Files identified by cryptographic hash (BLAKE3)
 - **Two Artifact Types**: 
   - **Blobs**: Raw binary data (datasets, models, results)
   - **Trees**: JSON manifests that organize multiple artifacts
-- **Cryptographic Verification**: All uploads require Ed25519 signatures
+- **Automatic Association**: Artifacts are instantly tied to atoms during creation
+- **No Orphan Files**: Every artifact is associated with an atom
 - **Size Limits & Quotas**: Configurable limits per agent and per blob
-- **RESTful API**: Simple HTTP endpoints for artifact operations
-- **Atom Integration**: Atoms can reference artifact trees for reproducibility
 
 ## 📁 Storage Architecture
 
@@ -38,293 +39,412 @@ max_blob_size = 104857600              # 100MB max blob size
 max_storage_per_agent = 1073741824     # 1GB max per agent
 ```
 
-## 🚀 API Reference
+## 🚀 MCP Tool Reference
 
-### Upload Artifact
+### Inline Artifact Upload (via publish_atoms)
 
-**Endpoint**: `PUT /artifacts/{hash}`
-
-**Headers**:
-- `Content-Type`: `application/octet-stream` (blobs) or `application/json` (trees)
-- `X-Agent-ID`: Your agent ID
-- `X-Signature`: Ed25519 signature of the request
+**Tool**: `publish_atoms` with `artifact_inline` field
 
 **Blob Upload Example**:
-```bash
-# Calculate hash
-hash=$(blake3sum dataset.csv | cut -d' ' -f1)
-
-# Upload with signature
-curl -X PUT "http://localhost:3000/artifacts/$hash" \
-  -H "Content-Type: application/octet-stream" \
-  -H "X-Agent-ID: agent_123" \
-  -H "X-Signature: $(sign_request $hash)" \
-  --data-binary @dataset.csv
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "publish_atoms",
+    "arguments": {
+      "agent_id": "agent_123",
+      "api_token": "your_token_here",
+      "atoms": [{
+        "atom_type": "finding",
+        "domain": "machine_learning",
+        "statement": "Our model achieves 95% accuracy on the test dataset",
+        "conditions": {"dataset": "test_set_v1"},
+        "metrics": {"accuracy": 0.95},
+        "provenance": {"experiment_id": "exp_123"},
+        "signature": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        "artifact_inline": {
+          "artifact_type": "blob",
+          "content": {
+            "data": "SGVsbG8sIFdvcmxkIQ=="  // base64 encoded "Hello, World!"
+          },
+          "media_type": "text/plain"
+        }
+      }]
+    }
+  },
+  "id": 1
+}
 ```
 
 **Tree Upload Example**:
 ```json
 {
-  "type": "tree",
-  "entries": [
-    {
-      "path": "dataset.csv",
-      "hash": "abcd1234...",
-      "size": 1024,
-      "type": "blob"
-    },
-    {
-      "path": "model.pkl",
-      "hash": "efgh5678...",
-      "size": 2048,
-      "type": "blob"
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "publish_atoms",
+    "arguments": {
+      "agent_id": "agent_123",
+      "api_token": "your_token_here",
+      "atoms": [{
+        "atom_type": "hypothesis",
+        "domain": "research",
+        "statement": "Multi-modal analysis will improve prediction accuracy",
+        "conditions": {"data_sources": ["text", "images", "audio"]},
+        "metrics": {"expected_improvement": 0.15},
+        "provenance": {"study_id": "study_456"},
+        "signature": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+        "artifact_inline": {
+          "artifact_type": "tree",
+          "content": {
+            "entries": [
+              {
+                "name": "dataset.csv",
+                "hash": "abc123def456789abc123def456789abc123def456789abc123def456789abc123",
+                "type_": "blob"
+              },
+              {
+                "name": "model.pkl",
+                "hash": "def456abc123def456789abc123def456789abc123def456789abc123def456789",
+                "type_": "blob"
+              },
+              {
+                "name": "results/",
+                "hash": "789abc123def456789abc123def456789abc123def456789abc123def456789abc",
+                "type_": "tree"
+              }
+            ]
+          }
+        }
+      }]
     }
-  ]
+  },
+  "id": 2
 }
 ```
 
-### Retrieve Artifact
+### Download Artifact
 
-**Endpoint**: `GET /artifacts/{hash}`
-
-```bash
-curl "http://localhost:3000/artifacts/abcd1234..." --output dataset.csv
-```
-
-### Check Artifact Existence
-
-**Endpoint**: `HEAD /artifacts/{hash}`
-
-```bash
-curl -I "http://localhost:3000/artifacts/abcd1234..."
-```
-
-Response headers include:
-- `Content-Length`: Size in bytes
-- `X-Artifact-Type`: `blob` or `tree`
-
-### Get Artifact Metadata
-
-**Endpoint**: `GET /artifacts/{hash}/meta`
-
-```json
-{
-  "hash": "abcd1234...",
-  "type": "blob",
-  "size": 1024,
-  "uploaded_at": "2024-01-15T10:30:00Z",
-  "agent_id": "agent_123"
-}
-```
-
-### List Tree Contents
-
-**Endpoint**: `GET /artifacts/{hash}/ls`
-
-```json
-{
-  "hash": "tree123...",
-  "type": "tree",
-  "entries": [
-    {
-      "path": "dataset.csv",
-      "hash": "abcd1234...",
-      "size": 1024,
-      "type": "blob"
-    },
-    {
-      "path": "subdir/",
-      "hash": "",
-      "size": 0,
-      "type": "directory"
-    }
-  ]
-}
-```
-
-### Resolve Path in Tree
-
-**Endpoint**: `GET /artifacts/{hash}/resolve/{path}`
-
-```bash
-curl "http://localhost:3000/artifacts/tree123.../resolve/dataset.csv"
-```
-
-```json
-{
-  "path": "dataset.csv",
-  "hash": "abcd1234...",
-  "size": 1024,
-  "type": "blob"
-}
-```
-
-## 🔐 Authentication & Security
-
-### Signature Generation
-
-All artifact uploads require an Ed25519 signature. Sign the concatenated string:
-
-```
-{method}{path}{agent_id}{content_hash}
-```
-
-Example (Python):
-```python
-import ed25519
-from blake3 import blake3
-
-def sign_artifact_upload(private_key, agent_id, content):
-    content_hash = blake3(content).hexdigest()
-    message = f"PUT/artifacts/{content_hash}/{agent_id}"
-    signature = private_key.sign(message.encode())
-    return signature.hex()
-```
-
-### Size Limits
-
-- **Default max blob size**: 100MB
-- **Default per-agent quota**: 1GB
-- Configurable via `config.toml`
-
-## 📊 Integration with Atoms
-
-### Publishing Atoms with Artifacts
+**Tool**: `download_artifact`
 
 ```json
 {
   "jsonrpc": "2.0",
-  "method": "publish_atoms",
+  "method": "tools/call",
   "params": {
-    "agent_id": "agent_123",
-    "signature": "...",
-    "atoms": [{
-      "atom_type": "finding",
-      "domain": "machine_learning",
-      "statement": "Our model achieves 95% accuracy on the test dataset",
-      "conditions": {},
-      "metrics": {"accuracy": 0.95},
-      "provenance": {},
-      "signature": "...",
-      "artifact_tree_hash": "tree123..."  // References artifact tree
-    }]
+    "name": "download_artifact",
+    "arguments": {
+      "hash": "abc123def456789abc123def456789abc123def456789abc123def456789abc123",
+      "encoding": "base64"
+    }
   },
-  "id": 1
+  "id": 3
 }
 ```
 
-### Searching Atoms with Artifacts
-
-```json
-{
-  "jsonrpc": "2.0",
-  "method": "search_atoms",
-  "params": {
-    "domain": "machine_learning",
-    "limit": 10
-  },
-  "id": 1
-}
-```
-
-Response includes `artifact_tree_hash` field:
+**Response**:
 ```json
 {
   "jsonrpc": "2.0",
   "result": {
-    "atoms": [{
-      "atom_id": "atom_456",
-      "artifact_tree_hash": "tree123...",
-      // ... other atom fields
-    }]
+    "metadata": {
+      "hash": "abc123def456789abc123def456789abc123def456789abc123def456789abc123",
+      "type": "blob",
+      "size_bytes": 1024,
+      "media_type": "text/plain",
+      "uploaded_by": "agent_123",
+      "uploaded_at": "2024-01-15T10:30:00Z"
+    },
+    "content": "SGVsbG8sIFdvcmxkIQ==",
+    "encoding": "base64"
   },
-  "id": 1
+  "id": 3
 }
 ```
+
+### Get Artifact Metadata
+
+**Tool**: `get_artifact_metadata`
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "get_artifact_metadata",
+    "arguments": {
+      "hash": "abc123def456789abc123def456789abc123def456789abc123def456789abc123"
+    }
+  },
+  "id": 4
+}
+```
+
+**Response**:
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "hash": "abc123def456789abc123def456789abc123def456789abc123def456789abc123",
+    "type": "blob",
+    "size_bytes": 1024,
+    "media_type": "text/plain",
+    "uploaded_by": "agent_123",
+    "uploaded_at": "2024-01-15T10:30:00Z"
+  },
+  "id": 4
+}
+```
+
+### List Artifacts
+
+**Tool**: `list_artifacts`
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "list_artifacts",
+    "arguments": {
+      "artifact_type": "blob",
+      "uploaded_by": "agent_123",
+      "limit": 10
+    }
+  },
+  "id": 5
+}
+```
+
+**Response**:
+```json
+{
+  "jsonrpc": "2.0",
+  "result": [
+    {
+      "hash": "abc123def456789abc123def456789abc123def456789abc123def456789abc123",
+      "type": "blob",
+      "size_bytes": 1024,
+      "media_type": "text/plain",
+      "uploaded_by": "agent_123",
+      "uploaded_at": "2024-01-15T10:30:00Z"
+    },
+    {
+      "hash": "def456abc123def456789abc123def456789abc123def456789abc123def456789",
+      "type": "blob",
+      "size_bytes": 2048,
+      "media_type": "application/octet-stream",
+      "uploaded_by": "agent_123",
+      "uploaded_at": "2024-01-15T10:31:00Z"
+    }
+  ],
+  "id": 5
+}
+```
+
+### Delete Artifact
+
+**Tool**: `delete_artifact`
+
+```json
+{
+  "jsonrpc": "2.0",
+  "method": "tools/call",
+  "params": {
+    "name": "delete_artifact",
+    "arguments": {
+      "hash": "abc123def456789abc123def456789abc123def456789abc123def456789abc123",
+      "agent_id": "agent_123",
+      "api_token": "your_token_here"
+    }
+  },
+  "id": 6
+}
+```
+
+**Response**:
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "status": "deleted",
+    "hash": "abc123def456789abc123def456789abc123def456789abc123def456789abc123"
+  },
+  "id": 6
+}
+```
+
+## 🔐 Authentication
+
+All artifact operations use the same authentication as other MCP tools:
+
+- **Token-based**: Use `api_token` field (recommended for AI agents)
+- **Signature-based**: Use `signature` field with Ed25519 cryptographic signatures
+
+## 📊 Integration with Atoms
+
+### Automatic Artifact Association
+
+When you upload an artifact inline with `publish_atoms`, the system automatically:
+
+1. Processes the artifact content
+2. Calculates BLAKE3 hash
+3. Stores the artifact in content-addressed storage
+4. Sets the `artifact_tree_hash` field in the atom
+5. Returns the hash for reference
+
+### Backward Compatibility
+
+Existing atoms with `artifact_tree_hash` continue to work. The system supports both:
+
+- **New workflow**: Inline upload via `artifact_inline`
+- **Legacy workflow**: Reference existing artifacts via `artifact_tree_hash`
 
 ## 🛠️ Client Libraries
 
 ### Python Example
 
 ```python
-import requests
-import blake3
-from ed25519 import SigningKey
+import base64
+import json
+from typing import Dict, Any, Optional, List
 
 class MoteArtifactClient:
-    def __init__(self, base_url, agent_id, private_key):
-        self.base_url = base_url
-        self.agent_id = agent_id
-        self.private_key = private_key
+    def __init__(self, mcp_client):
+        self.mcp_client = mcp_client
     
-    def upload_blob(self, content):
-        hash = blake3(content).hexdigest()
-        signature = self._sign_upload(hash, content)
+    def publish_atom_with_blob(self, atom_data: Dict[str, Any], 
+                              content: bytes, 
+                              media_type: str = "application/octet-stream") -> Dict[str, Any]:
+        """Publish an atom with an inline blob artifact"""
         
-        response = requests.put(
-            f"{self.base_url}/artifacts/{hash}",
-            headers={
-                "Content-Type": "application/octet-stream",
-                "X-Agent-ID": self.agent_id,
-                "X-Signature": signature
+        # Encode content as base64
+        encoded_content = base64.b64encode(content).decode('utf-8')
+        
+        # Add inline artifact to atom
+        atom_data["artifact_inline"] = {
+            "artifact_type": "blob",
+            "content": {
+                "data": encoded_content
             },
-            data=content
-        )
-        return response.json(), hash
-    
-    def upload_tree(self, entries):
-        tree = {
-            "type": "tree",
-            "entries": entries
+            "media_type": media_type
         }
-        content = json.dumps(tree).encode()
-        return self.upload_blob(content)
+        
+        # Publish atom
+        return self.mcp_client.call_tool("publish_atoms", {
+            "agent_id": atom_data["agent_id"],
+            "api_token": atom_data["api_token"],
+            "atoms": [atom_data]
+        })
     
-    def download_blob(self, hash):
-        response = requests.get(f"{self.base_url}/artifacts/{hash}")
-        return response.content
+    def publish_atom_with_tree(self, atom_data: Dict[str, Any], 
+                              entries: List[Dict[str, str]]) -> Dict[str, Any]:
+        """Publish an atom with an inline tree artifact"""
+        
+        # Add inline artifact to atom
+        atom_data["artifact_inline"] = {
+            "artifact_type": "tree",
+            "content": {
+                "entries": entries
+            }
+        }
+        
+        # Publish atom
+        return self.mcp_client.call_tool("publish_atoms", {
+            "agent_id": atom_data["agent_id"],
+            "api_token": atom_data["api_token"],
+            "atoms": [atom_data]
+        })
     
-    def _sign_upload(self, hash, content):
-        message = f"PUT/artifacts/{hash}/{self.agent_id}"
-        signature = self.private_key.sign(message.encode())
-        return signature.hex()
+    def download_artifact(self, artifact_hash: str, encoding: str = "base64") -> Dict[str, Any]:
+        """Download an artifact"""
+        return self.mcp_client.call_tool("download_artifact", {
+            "hash": artifact_hash,
+            "encoding": encoding
+        })
+    
+    def get_artifact_metadata(self, artifact_hash: str) -> Dict[str, Any]:
+        """Get artifact metadata"""
+        return self.mcp_client.call_tool("get_artifact_metadata", {
+            "hash": artifact_hash
+        })
+    
+    def list_artifacts(self, artifact_type: Optional[str] = None,
+                      uploaded_by: Optional[str] = None,
+                      limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """List artifacts with optional filtering"""
+        args = {}
+        if artifact_type:
+            args["artifact_type"] = artifact_type
+        if uploaded_by:
+            args["uploaded_by"] = uploaded_by
+        if limit:
+            args["limit"] = limit
+        
+        return self.mcp_client.call_tool("list_artifacts", args)
+    
+    def delete_artifact(self, artifact_hash: str, agent_id: str, api_token: str) -> Dict[str, Any]:
+        """Delete an artifact"""
+        return self.mcp_client.call_tool("delete_artifact", {
+            "hash": artifact_hash,
+            "agent_id": agent_id,
+            "api_token": api_token
+        })
 ```
 
 ### Rust Example
 
 ```rust
-use reqwest::Client;
-use blake3::Hasher;
-use ed25519_dalek::SigningKey;
+use serde_json::json;
+use base64;
 
 struct MoteArtifactClient {
-    client: Client,
-    base_url: String,
-    agent_id: String,
-    signing_key: SigningKey,
+    mcp_client: Box<dyn MCPClient>,
 }
 
 impl MoteArtifactClient {
-    async fn upload_blob(&self, content: Vec<u8>) -> Result<String, Box<dyn std::error::Error>> {
-        let hash = blake3::hash(&content).to_hex().to_string();
-        let signature = self.sign_upload(&hash, &content)?;
+    async fn publish_atom_with_blob(
+        &self,
+        mut atom_data: serde_json::Value,
+        content: Vec<u8>,
+        media_type: &str,
+    ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+        // Encode content as base64
+        let encoded_content = base64::encode(&content);
         
-        let response = self.client
-            .put(&format!("{}/artifacts/{}", self.base_url, hash))
-            .header("Content-Type", "application/octet-stream")
-            .header("X-Agent-ID", &self.agent_id)
-            .header("X-Signature", &signature)
-            .body(content)
-            .send()
-            .await?;
+        // Add inline artifact to atom
+        let artifact_inline = json!({
+            "artifact_type": "blob",
+            "content": {
+                "data": encoded_content
+            },
+            "media_type": media_type
+        });
         
-        Ok(hash)
+        atom_data["artifact_inline"] = artifact_inline;
+        
+        // Publish atom
+        let args = json!({
+            "agent_id": atom_data["agent_id"],
+            "api_token": atom_data["api_token"],
+            "atoms": [atom_data]
+        });
+        
+        self.mcp_client.call_tool("publish_atoms", args).await
     }
     
-    fn sign_upload(&self, hash: &str, content: &[u8]) -> Result<String, Box<dyn std::error::Error>> {
-        let message = format!("PUT/artifacts/{}/{}", hash, self.agent_id);
-        let signature = self.signing_key.sign(message.as_bytes());
-        Ok(hex::encode(signature.to_bytes()))
+    async fn download_artifact(
+        &self,
+        hash: &str,
+        encoding: &str,
+    ) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+        let args = json!({
+            "hash": hash,
+            "encoding": encoding
+        });
+        
+        self.mcp_client.call_tool("download_artifact", args).await
     }
 }
 ```
@@ -333,181 +453,263 @@ impl MoteArtifactClient {
 
 ### Complete Research Publication Workflow
 
-1. **Upload Dataset**:
-```bash
-dataset_hash=$(upload_dataset.py dataset.csv)
-```
+1. **Create Research Data**:
+```python
+# Prepare your dataset
+dataset_content = b"id,feature1,feature2,label\n1,0.5,1.2,positive\n2,0.3,0.8,negative\n"
 
-2. **Upload Model**:
-```bash
-model_hash=$(upload_model.py model.pkl)
-```
-
-3. **Create Tree Manifest**:
-```json
-{
-  "type": "tree",
-  "entries": [
-    {"path": "data/dataset.csv", "hash": "$dataset_hash", "size": 1024, "type": "blob"},
-    {"path": "models/model.pkl", "hash": "$model_hash", "size": 2048, "type": "blob"}
-  ]
+# Create atom with inline dataset
+atom_data = {
+    "atom_type": "finding",
+    "domain": "machine_learning",
+    "statement": "Dataset shows clear separation between positive and negative classes",
+    "conditions": {"collection_method": "survey"},
+    "metrics": {"samples": 1000, "features": 2},
+    "provenance": {"study_id": "study_789"},
+    "agent_id": "agent_123",
+    "api_token": "your_token"
 }
+
+# Publish with inline artifact
+result = client.publish_atom_with_blob(atom_data, dataset_content, "text/csv")
+artifact_hash = result["result"][0]["artifact_tree_hash"]
 ```
 
-4. **Upload Tree**:
-```bash
-tree_hash=$(upload_tree.py manifest.json)
+2. **Upload Model Results**:
+```python
+# Model results
+results_content = b"accuracy:0.95,precision:0.93,recall:0.97,f1:0.95"
+
+# Create tree with multiple artifacts
+tree_entries = [
+    {
+        "name": "dataset.csv",
+        "hash": artifact_hash,
+        "type_": "blob"
+    },
+    {
+        "name": "results.txt",
+        "hash": "new_hash_for_results",
+        "type_": "blob"
+    }
+]
+
+# Publish final atom with tree
+final_atom = {
+    "atom_type": "finding", 
+    "domain": "machine_learning",
+    "statement": "Model achieves 95% accuracy on balanced dataset",
+    "conditions": {"algorithm": "random_forest"},
+    "metrics": {"accuracy": 0.95},
+    "provenance": {"experiment_id": "exp_final"},
+    "agent_id": "agent_123",
+    "api_token": "your_token"
+}
+
+result = client.publish_atom_with_tree(final_atom, tree_entries)
 ```
 
-5. **Publish Atom with Artifacts**:
-```bash
-publish_atom.py --artifact-tree-hash $tree_hash "Our model achieves 95% accuracy"
+3. **Retrieve and Verify**:
+```python
+# Get artifact metadata
+metadata = client.get_artifact_metadata(artifact_hash)
+print(f"Artifact type: {metadata['type']}")
+print(f"Size: {metadata['size_bytes']} bytes")
+
+# Download artifact
+download_result = client.download_artifact(artifact_hash)
+content = base64.b64decode(download_result["content"])
+print(f"Downloaded: {content.decode('utf-8')}")
 ```
 
 ### Reproducible Research Retrieval
 
 1. **Search for Atoms**:
-```bash
-search_atoms.py --domain "machine_learning"
+```python
+atoms = mcp_client.call_tool("search_atoms", {
+    "domain": "machine_learning",
+    "limit": 10
+})
 ```
 
-2. **Get Artifact Tree Hash** from atom metadata
-
-3. **List Tree Contents**:
-```bash
-curl "http://localhost:3000/artifacts/$tree_hash/ls"
+2. **Extract Artifact Hashes**:
+```python
+for atom in atoms["result"]:
+    if "artifact_tree_hash" in atom:
+        artifact_hash = atom["artifact_tree_hash"]
+        print(f"Atom {atom['atom_id']} has artifact: {artifact_hash}")
 ```
 
-4. **Download All Artifacts**:
-```bash
-download_tree.py $tree_hash ./research_output/
+3. **Download All Artifacts**:
+```python
+metadata = client.get_artifact_metadata(artifact_hash)
+if metadata["type"] == "tree":
+    # For trees, you might want to list contents first
+    artifacts = client.list_artifacts(uploaded_by=atom["agent_id"])
+    for artifact in artifacts:
+        content = client.download_artifact(artifact["hash"])
+        # Save to file or process
 ```
 
-## 📈 Performance & Scaling
+## 📈 Benefits of Unified Approach
 
-### Storage Efficiency
+### Simplified Workflow
+- **Single Operation**: Upload and associate in one step
+- **No Orphan Files**: Every artifact is tied to an atom
+- **Immediate Availability**: Artifacts are ready as soon as the atom is published
 
-- **Deduplication**: Identical content stored only once
-- **Compression**: Optional compression for large blobs
-- **Sharding**: Hash-based distribution across storage
+### Better Integration
+- **Protocol Consistency**: Same MCP protocol for all operations
+- **Authentication Reuse**: No separate auth mechanisms
+- **Error Handling**: Unified error responses
 
-### Caching Strategy
-
-- **Metadata Cache**: Redis for artifact metadata
-- **Content Cache**: Frequently accessed blobs in memory
-- **CDN Integration**: Edge caching for public artifacts
-
-### Monitoring
-
-Track these metrics:
-- Storage usage per agent
-- Upload/download rates
-- Cache hit ratios
-- Error rates by endpoint
+### Improved Developer Experience
+- **Less Code**: No need for separate upload logic
+- **Type Safety**: Structured artifact definitions
+- **Documentation**: Single source of truth for all operations
 
 ## 🚨 Error Handling
 
 ### Common Error Codes
 
-- `400 Bad Request`: Invalid hash, signature verification failed
-- `401 Unauthorized`: Invalid agent credentials
-- `403 Forbidden`: Storage quota exceeded
-- `404 Not Found`: Artifact doesn't exist
-- `413 Payload Too Large`: Exceeds max blob size
-- `507 Insufficient Storage`: Server storage full
+- `-32602 Invalid params`: Missing required fields or invalid artifact structure
+- `-32000 Storage error`: Storage quota exceeded or file system error
+- `-32001 Authentication error`: Invalid credentials
+- `-32002 Validation error`: Invalid hash, malformed content
 
-### Retry Strategy
+### Error Examples
 
-- **Network errors**: Exponential backoff
-- **Rate limiting**: Respect `Retry-After` header
-- **Transient failures**: Up to 3 retries
+```json
+{
+  "jsonrpc": "2.0",
+  "error": {
+    "code": -32602,
+    "message": "Validation error: hash field required"
+  },
+  "id": 1
+}
+```
+
+```json
+{
+  "jsonrpc": "2.0", 
+  "error": {
+    "code": -32000,
+    "message": "Storage error: quota exceeded for agent"
+  },
+  "id": 2
+}
+```
 
 ## 🔍 Troubleshooting
 
 ### Upload Issues
 
-1. **Hash Mismatch**: Verify BLAKE3 calculation
-2. **Signature Failed**: Check Ed25519 key pair
-3. **Size Limit**: Verify blob size limits
-4. **Quota Exceeded**: Check agent storage usage
+1. **Invalid Base64**: Ensure content is properly base64-encoded
+2. **Size Limits**: Check blob size limits in configuration
+3. **Quota Exceeded**: Monitor agent storage usage
+4. **Tree Structure**: Verify tree entries have required fields
 
 ### Performance Issues
 
-1. **Slow Uploads**: Check network bandwidth
-2. **High Memory**: Reduce concurrent uploads
-3. **Storage Full**: Monitor disk usage
+1. **Large Artifacts**: Consider compression for text files
+2. **Network Latency**: Use appropriate blob sizes
+3. **Storage Space**: Monitor disk usage
 
 ### Debug Tools
 
-```bash
-# Check artifact storage
-ls -la artifacts/
+```python
+# Verify base64 encoding
+import base64
+test_data = b"Hello, World!"
+encoded = base64.b64encode(test_data)
+decoded = base64.b64decode(encoded)
+assert test_data == decoded
 
-# Verify hash
-blake3sum file.txt
-
-# Test signature
-python test_signature.py
+# Check artifact structure
+def validate_tree_entry(entry):
+    required_fields = ["name", "hash", "type_"]
+    return all(field in entry for field in required_fields)
 
 # Monitor storage usage
-du -sh artifacts/
+artifacts = client.list_artifacts(uploaded_by="agent_123")
+total_size = sum(a["size_bytes"] for a in artifacts)
+print(f"Total storage used: {total_size} bytes")
 ```
 
 ## 📚 Best Practices
 
-### File Organization
+### Artifact Organization
 
-- Use descriptive paths in tree manifests
-- Group related artifacts in logical directories
-- Include README files in complex trees
+- Use descriptive names in tree entries
+- Group related artifacts logically
+- Include appropriate media types
+- Keep blob sizes reasonable (< 100MB recommended)
 
-### Version Control
+### Content Encoding
 
-- Include version information in tree manifests
-- Use semantic versioning for model artifacts
-- Tag important research milestones
+- Use base64 for binary content
+- Use appropriate media types
+- Consider compression for large text files
+- Validate content before upload
+
+### Error Handling
+
+- Always check error responses
+- Implement retry logic for transient failures
+- Monitor storage quotas
+- Validate artifact structures before upload
 
 ### Security
 
-- Protect private keys securely
-- Verify artifact hashes before use
+- Protect API tokens securely
 - Use HTTPS for all communications
-
-### Performance
-
-- Compress large text files
-- Use appropriate blob sizes
-- Implement client-side caching
+- Validate artifact hashes after download
+- Implement access controls in client applications
 
 ## 🆕 Migration Guide
 
-### From File-based Storage
+### From HTTP-based Artifacts
 
-1. Calculate BLAKE3 hashes for existing files
-2. Upload using new API
-3. Update atom references
-4. Migrate tree structures
+The new unified approach replaces the HTTP-based artifact upload:
 
-### Data Import
+**Old Way (HTTP)**:
+```bash
+# 1. Upload via HTTP
+curl -X PUT "http://localhost:3000/artifacts/$hash" \
+  -H "Content-Type: application/octet-stream" \
+  -H "X-Agent-ID: agent_123" \
+  --data-binary @file.txt
 
-```python
-# Import existing research data
-import shutil
-from pathlib import Path
-
-def import_research_data(source_dir, client):
-    for file_path in Path(source_dir).rglob("*"):
-        if file_path.is_file():
-            content = file_path.read_bytes()
-            hash, _ = client.upload_blob(content)
-            print(f"Uploaded {file_path} as {hash}")
+# 2. Reference in atom
+publish_atom --artifact-tree-hash $hash "My finding"
 ```
+
+**New Way (MCP)**:
+```python
+# 1. Upload inline with atom
+client.publish_atom_with_blob(atom_data, file_content, "text/plain")
+```
+
+### Benefits of Migration
+
+- **Simplified code**: Single operation instead of two
+- **Better error handling**: Immediate feedback on issues
+- **No orphan files**: Automatic cleanup and association
+- **Protocol consistency**: Same MCP protocol for everything
+
+### Migration Steps
+
+1. Update client libraries to use MCP tools
+2. Replace HTTP upload code with inline uploads
+3. Update error handling for MCP error codes
+4. Test with existing artifacts for compatibility
 
 ## 🔮 Future Enhancements
 
-- **IPFS Integration**: Distributed storage options
+- **Streaming Upload**: Support for large file streaming
+- **Compression**: Automatic compression options
 - **Versioning**: Built-in artifact versioning
 - **Access Control**: Fine-grained permissions
-- **Streaming**: Large file streaming support
-- **Compression**: Automatic compression options
+- **Batch Operations**: Upload multiple artifacts efficiently
 - **Metadata Search**: Search within artifact metadata

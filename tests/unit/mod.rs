@@ -15,3 +15,4 @@ mod decay_worker_tests;
 pub mod phase6_sse_tests;
 mod suggestions_tests;
 mod artifact_processor_tests;
+mod exploration_tests;

@@ -95,7 +95,7 @@ async fn test_mcp_initialize_lifecycle() {
     let response_json: serde_json::Value = serde_json::from_slice(&body).unwrap();
     
     let tools = response_json.get("result").unwrap().get("tools").unwrap().as_array().unwrap();
-    assert_eq!(tools.len(), 10); // register_agent_simple + 9 original tools
+    assert_eq!(tools.len(), 14); // 14 tools including artifact tools
 }
 
 #[serial]
