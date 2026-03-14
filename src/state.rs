@@ -87,9 +87,12 @@ impl AppState {
         sse_broadcast_tx: broadcast::Sender<SseEvent>,
         storage: Arc<crate::storage::LocalStorage>,
     ) -> Result<Self, crate::error::MoteError> {
-        // Initialize graph cache
+        // Initialize graph cache from DB so it survives restarts
         let graph_cache = Arc::new(tokio::sync::RwLock::new(
-            GraphCache::new()
+            GraphCache::load_from_database(&pool).await.unwrap_or_else(|e| {
+                tracing::warn!("Failed to load graph cache from DB: {}, starting empty", e);
+                GraphCache::new()
+            })
         ));
 
         // Initialize condition registry

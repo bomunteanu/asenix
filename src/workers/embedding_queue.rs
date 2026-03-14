@@ -200,7 +200,7 @@ impl EmbeddingQueue {
         let conditions: Value = atom_row.get("conditions");
         let metrics: Option<Value> = atom_row.get("metrics");
 
-        let neighbours = self.find_neighbours(embedding, &domain).await?;
+        let neighbours = self.find_neighbours(embedding, &domain, atom_id).await?;
         let mut updates: Vec<(String, &str, f64)> = Vec::new();
 
         // ── Fix 4: per-atom novelty (not a shared count) ─────────────────────
@@ -289,7 +289,7 @@ impl EmbeddingQueue {
     }
 
     /// Find atoms within neighbourhood radius of the given embedding.
-    async fn find_neighbours(&self, embedding: &[f32], domain: &str) -> Result<Vec<NeighbourInfo>> {
+    async fn find_neighbours(&self, embedding: &[f32], domain: &str, exclude_atom_id: &str) -> Result<Vec<NeighbourInfo>> {
         let pg_vector = Vector::from(embedding.to_vec());
         let rows = sqlx::query(
             "SELECT atom_id, ph_attraction, ph_repulsion, ph_novelty, conditions, metrics
@@ -298,11 +298,13 @@ impl EmbeddingQueue {
                AND embedding_status = 'ready'
                AND domain = $1
                AND NOT archived
-               AND embedding <=> $2 < $3"
+               AND embedding <=> $2 < $3
+               AND atom_id != $4"
         )
         .bind(domain)
         .bind(&pg_vector)
         .bind(self.config.hub.neighbourhood_radius)
+        .bind(exclude_atom_id)
         .fetch_all(&self.pool)
         .await?;
 

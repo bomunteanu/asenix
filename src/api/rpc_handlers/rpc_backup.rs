@@ -112,6 +112,8 @@ pub async fn handle_mcp(
         "claim_direction" => handle_claim_direction(&state, request.params).await,
         "publish_atoms" => handle_publish_atoms(&state, request.params).await,
         "retract_atom" => handle_retract_atom(&state, request.params).await,
+        "ban_atom" => handle_ban_atom(&state, request.params).await,
+        "unban_atom" => handle_unban_atom(&state, request.params).await,
         "get_suggestions" => handle_get_suggestions(&state, request.params).await,
         "get_field_map" => handle_get_field_map(&state, request.params).await,
         "get_graph_edges" => handle_get_graph_edges(&state).await,
@@ -807,6 +809,28 @@ pub async fn handle_retract_atom(
     crate::db::queries::retract_atom(&state.pool, &atom_id, &agent_id, reason.as_deref()).await?;
 
     Ok(json!({ "status": "retracted" }))
+}
+
+pub async fn handle_ban_atom(
+    state: &AppState,
+    params: Option<Value>,
+) -> Result<Value> {
+    let params = params.ok_or_else(|| MoteError::Validation("Missing params".to_string()))?;
+    let atom_id: String = serde_json::from_value(params["atom_id"].clone())
+        .map_err(|_| MoteError::Validation("atom_id field required".to_string()))?;
+    crate::db::queries::ban_atom(&state.pool, &atom_id).await?;
+    Ok(json!({ "status": "banned" }))
+}
+
+pub async fn handle_unban_atom(
+    state: &AppState,
+    params: Option<Value>,
+) -> Result<Value> {
+    let params = params.ok_or_else(|| MoteError::Validation("Missing params".to_string()))?;
+    let atom_id: String = serde_json::from_value(params["atom_id"].clone())
+        .map_err(|_| MoteError::Validation("atom_id field required".to_string()))?;
+    crate::db::queries::unban_atom(&state.pool, &atom_id).await?;
+    Ok(json!({ "status": "unbanned" }))
 }
 
 pub async fn handle_get_suggestions(

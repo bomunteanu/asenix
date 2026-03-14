@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use tower_http::cors::{CorsLayer, Any};
 
 mod api;
 mod config;
@@ -89,6 +90,8 @@ async fn main() -> anyhow::Result<()> {
     let state = state::AppState::new(pool, config.clone(), embedding_queue_tx.clone(), sse_broadcast_tx, storage)
         .await?;
 
+    tracing::info!("rspc-style endpoint configured at /api/rspc");
+
     // Start background workers
     let embedding_worker = workers::embedding_queue::EmbeddingQueue::new(
         state.pool.clone(),
@@ -124,6 +127,11 @@ async fn main() -> anyhow::Result<()> {
     let _bounty_handle = tokio::spawn(bounty_worker.start(staleness_interval));
 
     // Build router
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
+
     let app = Router::new()
         .route("/health", get(api::handlers::health_check))
         .route("/metrics", get(api::handlers::metrics))
@@ -135,6 +143,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/mcp", post(api::mcp_server::handle_mcp_request)
             .get(api::mcp_server::handle_mcp_get)
             .delete(api::mcp_server::handle_mcp_delete))
+        // rspc endpoint (alongside existing /rpc)
+        .route("/api/rspc", post(api::rspc_router::handle_rspc_request))
         // Artifact routes
         .route("/artifacts/:hash", put(api::artifacts::put_artifact))
         .route("/artifacts/:hash", get(api::artifacts::get_artifact))
@@ -142,6 +152,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/artifacts/:hash/meta", get(api::artifacts::get_artifact_metadata))
         .route("/artifacts/:hash/ls", get(api::artifacts::list_artifact_tree))
         .route("/artifacts/:hash/resolve/*path", get(api::artifacts::resolve_artifact_path))
+        .layer(cors)
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB limit
         .with_state(std::sync::Arc::new(state.clone()));
 

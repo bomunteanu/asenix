@@ -315,6 +315,26 @@ pub async fn retract_atom(
     Ok(())
 }
 
+/// Admin ban: marks atom as retracted and sets ban_flag. No author check.
+pub async fn ban_atom(pool: &PgPool, atom_id: &str) -> Result<()> {
+    sqlx::query("UPDATE atoms SET retracted = true, ban_flag = true, retraction_reason = 'banned' WHERE atom_id = $1")
+        .bind(atom_id)
+        .execute(pool)
+        .await
+        .map_err(MoteError::Database)?;
+    Ok(())
+}
+
+/// Admin unban: clears retracted and ban_flag.
+pub async fn unban_atom(pool: &PgPool, atom_id: &str) -> Result<()> {
+    sqlx::query("UPDATE atoms SET retracted = false, ban_flag = false, retraction_reason = NULL WHERE atom_id = $1")
+        .bind(atom_id)
+        .execute(pool)
+        .await
+        .map_err(MoteError::Database)?;
+    Ok(())
+}
+
 // Helper function to create Atom from database row
 pub fn atom_from_row(row: sqlx::postgres::PgRow) -> Result<Atom> {
     use sqlx::Row as _;

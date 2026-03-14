@@ -45,17 +45,15 @@ REQUIRED_KEYS    = {"num_blocks", "base_channels"}  # from condition_registry
 
 # ── pheromone math (mirrors pheromone.rs) ────────────────────────────────────
 
-def attraction_boost(new_val, neighbourhood_best, cap=ATTRACTION_CAP, baseline=BASELINE_BOOST):
-    if neighbourhood_best is None:
+def attraction_boost(new_val_t, prev_best_t, cap=ATTRACTION_CAP, baseline=BASELINE_BOOST):
+    """Compute boost in 'higher-is-always-better' transformed space.
+    Lower-better metrics must already be negated before calling.
+    This avoids the sign-inversion trap in the Rust version's `best < 0` branch."""
+    if prev_best_t is None:
         return baseline
-    best = neighbourhood_best
-    if best == 0.0:
+    if prev_best_t == 0.0:
         return baseline
-    if best < 0.0:
-        improvement = best - new_val
-        rel = improvement / abs(best)
-    else:
-        rel = (new_val - best) / abs(best)
+    rel = (new_val_t - prev_best_t) / abs(prev_best_t)
     return min(rel, cap) if rel > 0.0 else 0.0
 
 def novelty(count):
@@ -221,40 +219,25 @@ def main():
             if dom not in domain_best:
                 domain_best[dom] = {}
 
-            total_boost = 0.0
             for mname, (mval, higher_better) in mets.items():
-                if higher_better:
-                    best = domain_best[dom].get(mname)
-                else:
-                    # lower_better: invert sign so attraction_boost works correctly
-                    raw_best = domain_best[dom].get(mname)
-                    best = -raw_best if raw_best is not None else None
-                    mval = -mval
+                # Store domain_best in a "higher is always better" transformed space
+                transformed = mval if higher_better else -mval
+                prev_best_t = domain_best[dom].get(mname)
 
-                boost = attraction_boost(mval, best)
-                total_boost += boost
+                boost = attraction_boost(transformed, prev_best_t)
 
-                # Update running best
-                actual_val = atom["metrics"]  # use original
-                real_val = extract_metrics(atom["metrics"]).get(mname, (None,))[0]
-                if real_val is not None:
-                    if mname not in domain_best[dom]:
-                        domain_best[dom][mname] = real_val
-                    else:
-                        prev = domain_best[dom][mname]
-                        if higher_better:
-                            domain_best[dom][mname] = max(prev, real_val)
-                        else:
-                            domain_best[dom][mname] = min(prev, real_val)
+                # Spread this metric's boost independently to every neighbour
+                for nid in nbr_ids:
+                    if nid in state:
+                        state[nid]["ph_attraction"] = min(
+                            state[nid]["ph_attraction"] + boost, ATTRACTION_CAP
+                        )
 
-            # Spread to neighbours, also give this atom a baseline
-            per_nbr_boost = total_boost / max(len(mets), 1)
-            for nid in nbr_ids:
-                if nid in state:
-                    state[nid]["ph_attraction"] = min(
-                        state[nid]["ph_attraction"] + per_nbr_boost, ATTRACTION_CAP
-                    )
-            # The atom itself gets baseline (it's a new, confirmed observation)
+                # Update running best (in transformed space)
+                if prev_best_t is None or transformed > prev_best_t:
+                    domain_best[dom][mname] = transformed
+
+            # The atom itself gets a seed attraction as a confirmed observation
             state[aid]["ph_attraction"] = BASELINE_BOOST
 
         elif atype == "hypothesis":
