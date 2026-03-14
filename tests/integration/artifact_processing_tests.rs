@@ -1,5 +1,6 @@
 use asenix::api::artifact_processor::{InlineArtifact, ArtifactContent, TreeEntry};
 use asenix::storage::{StorageBackend, StorageError};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use blake3::Hasher;
 use hex;
 use tempfile::TempDir;
@@ -98,25 +99,41 @@ mod tests {
     async fn test_blob_artifact_structure() {
         // Test creating a blob artifact structure
         let data = b"Test file content";
-        let base64_data = base64::encode(data);
-        
+        let base64_data = BASE64.encode(data);
+
         let artifact = InlineArtifact {
             artifact_type: "blob".to_string(),
-            content: ArtifactContent::Blob { 
-                data: data.to_vec() 
+            content: ArtifactContent::Blob {
+                data: data.to_vec()
             },
             media_type: Some("text/plain".to_string()),
         };
-        
+
         // Verify structure
         assert_eq!(artifact.artifact_type, "blob");
-        match artifact.content {
+        match &artifact.content {
             ArtifactContent::Blob { data: artifact_data } => {
-                assert_eq!(artifact_data, data);
+                assert_eq!(artifact_data.as_slice(), data);
             }
             _ => panic!("Expected blob content"),
         }
         assert_eq!(artifact.media_type, Some("text/plain".to_string()));
+
+        // Verify wire format: JSON should use base64 string, no "Blob" wrapper tag
+        let json = serde_json::to_string(&artifact.content).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["data"].as_str().unwrap(), base64_data, "wire format should be base64 string");
+        assert!(v.get("Blob").is_none(), "no external tag wrapper expected");
+
+        // Verify round-trip deserialization from base64 wire format
+        let wire_json = format!(r#"{{"data":"{}"}}"#, base64_data);
+        let decoded: ArtifactContent = serde_json::from_str(&wire_json).unwrap();
+        match decoded {
+            ArtifactContent::Blob { data: decoded_data } => {
+                assert_eq!(decoded_data.as_slice(), data);
+            }
+            _ => panic!("Expected Blob after round-trip"),
+        }
     }
     
     #[tokio::test]
@@ -221,14 +238,14 @@ mod tests {
     async fn test_base64_encoding() {
         // Test base64 encoding/decoding for blob content
         let original_data = b"Test data for base64 encoding";
-        let encoded = base64::encode(original_data);
-        let decoded = base64::decode(&encoded).unwrap();
-        
+        let encoded = BASE64.encode(original_data);
+        let decoded = BASE64.decode(&encoded).unwrap();
+
         assert_eq!(original_data, &decoded[..]);
-        
+
         // Test that different data produces different base64
         let different_data = b"Different test data";
-        let different_encoded = base64::encode(different_data);
+        let different_encoded = BASE64.encode(different_data);
         assert_ne!(encoded, different_encoded);
     }
 }

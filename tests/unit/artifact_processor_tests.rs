@@ -1,4 +1,5 @@
 use asenix::api::artifact_processor::{InlineArtifact, ArtifactContent, TreeEntry};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use asenix::storage::{StorageBackend, StorageError};
 use blake3::Hasher;
 use hex;
@@ -116,6 +117,30 @@ mod tests {
         }
     }
     
+    #[tokio::test]
+    async fn test_blob_serde_wire_format() {
+        // Blob data should serialize as {"data": "<base64>"} with no "Blob" wrapper tag.
+        // This is the format agents (and the integration test) send over the wire.
+        let data = b"Hello, World!";
+        let expected_b64 = BASE64.encode(data);
+
+        let content = ArtifactContent::Blob { data: data.to_vec() };
+
+        // Serialize → must be flat {"data": "<base64>"}
+        let json = serde_json::to_string(&content).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(v["data"].as_str().unwrap(), expected_b64);
+        assert!(v.get("Blob").is_none(), "no external 'Blob' tag wrapper expected");
+
+        // Deserialize from agent wire format → must recover original bytes
+        let wire = format!(r#"{{"data":"{}"}}"#, expected_b64);
+        let decoded: ArtifactContent = serde_json::from_str(&wire).unwrap();
+        match decoded {
+            ArtifactContent::Blob { data: d } => assert_eq!(d.as_slice(), data),
+            _ => panic!("Expected Blob"),
+        }
+    }
+
     #[tokio::test]
     async fn test_artifact_hash_computation() {
         // Test that hash computation works correctly

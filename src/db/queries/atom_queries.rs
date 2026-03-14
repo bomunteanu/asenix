@@ -30,17 +30,12 @@ pub async fn publish_atom(
         .map_err(MoteError::Database)?;
 
         match artifact_check {
-            Some(row) => {
-                let artifact_type: String = row.get("type");
-                if artifact_type != "tree" {
-                    return Err(MoteError::Validation(
-                        format!("Artifact {} exists but is not a tree", artifact_hash)
-                    ));
-                }
+            Some(_) => {
+                // Artifact exists — both blobs and trees are valid attachments
             }
             None => {
                 return Err(MoteError::Validation(
-                    format!("Artifact {} does not exist. Upload the artifact tree first.", artifact_hash)
+                    format!("Artifact {} does not exist. Upload the artifact first.", artifact_hash)
                 ));
             }
         }
@@ -65,7 +60,13 @@ pub async fn publish_atom(
     .execute(&mut *tx)
     .await
     .map_err(MoteError::Database)?;
-    
+
+    sqlx::query("UPDATE agents SET atoms_published = atoms_published + 1 WHERE agent_id = $1")
+        .bind(agent_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(MoteError::Database)?;
+
     tx.commit().await.map_err(MoteError::Database)?;
     
     // TODO: Update graph cache incrementally

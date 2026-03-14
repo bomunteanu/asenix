@@ -126,6 +126,40 @@ pub fn extract_metric_value(metrics: &Value, metric_name: &str) -> Option<f64> {
         .as_f64()
 }
 
+/// Extract metric value from array-format metrics: [{name, value, direction}, ...]
+/// This is the wire format used by publish_atoms.
+pub fn extract_array_metric_value(metrics: &Value, metric_name: &str) -> Option<f64> {
+    let arr = metrics.as_array()?;
+    for m in arr {
+        if m.get("name")?.as_str()? == metric_name {
+            return m.get("value")?.as_f64();
+        }
+    }
+    None
+}
+
+/// Check if metric direction is "higher_better" from array-format metrics.
+pub fn is_array_metric_higher_better(metrics: &Value, metric_name: &str) -> bool {
+    let Some(arr) = metrics.as_array() else { return true; };
+    for m in arr {
+        if m.get("name").and_then(|n| n.as_str()) == Some(metric_name) {
+            return m.get("direction")
+                .and_then(|d| d.as_str())
+                .map(|d| d != "lower_better")
+                .unwrap_or(true);
+        }
+    }
+    true
+}
+
+/// List all metric names from array-format metrics.
+pub fn array_metric_names(metrics: &Value) -> Vec<String> {
+    let Some(arr) = metrics.as_array() else { return vec![] };
+    arr.iter()
+        .filter_map(|m| m.get("name")?.as_str().map(|s| s.to_string()))
+        .collect()
+}
+
 /// Check if metric direction is "higher_better" from JSON metrics object
 /// Defaults to true if not specified
 pub fn is_higher_better(metrics: &Value, metric_name: &str) -> bool {

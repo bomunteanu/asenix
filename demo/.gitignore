@@ -1,0 +1,8 @@
+results/
+logs/
+.agent_config
+.mnist_data/
+.cifar10_data/
+__pycache__/
+*.pyc
+

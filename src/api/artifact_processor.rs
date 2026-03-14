@@ -5,6 +5,23 @@ use hex;
 use serde::{Deserialize, Serialize};
 use sqlx::Row;
 
+/// Serde module: serializes Vec<u8> as a base64 string on the wire.
+/// Agents send `"data": "<base64>"` — no integer arrays, no Blob wrapper tag.
+mod base64_serde {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use serde::{Deserializer, Serializer};
+    use serde::de::Error;
+
+    pub fn serialize<S: Serializer>(data: &Vec<u8>, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&STANDARD.encode(data))
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Error> {
+        let s: String = serde::Deserialize::deserialize(d)?;
+        STANDARD.decode(&s).map_err(|e| D::Error::custom(format!("invalid base64: {e}")))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InlineArtifact {
     pub artifact_type: String,
@@ -12,9 +29,17 @@ pub struct InlineArtifact {
     pub media_type: Option<String>,
 }
 
+/// Wire format uses untagged serde so agents send:
+///   blob → `{"data": "<base64>"}`
+///   tree → `{"entries": [...]}`
+/// No "Blob"/"Tree" wrapper key, no integer arrays.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
 pub enum ArtifactContent {
-    Blob { data: Vec<u8> },
+    Blob {
+        #[serde(with = "base64_serde")]
+        data: Vec<u8>,
+    },
     Tree { entries: Vec<TreeEntry> },
 }
 
@@ -113,7 +138,7 @@ pub async fn process_inline_artifact(
         
         // Check per-agent storage limit
         let storage_check = sqlx::query(
-            "SELECT COALESCE(SUM(size_bytes), 0) as total FROM artifacts WHERE uploaded_by = $1"
+            "SELECT COALESCE(SUM(size_bytes), 0)::bigint as total FROM artifacts WHERE uploaded_by = $1"
         )
         .bind(agent_id)
         .fetch_one(pool)

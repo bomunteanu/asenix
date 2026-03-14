@@ -114,6 +114,7 @@ pub async fn handle_mcp(
         "retract_atom" => handle_retract_atom(&state, request.params).await,
         "get_suggestions" => handle_get_suggestions(&state, request.params).await,
         "get_field_map" => handle_get_field_map(&state, request.params).await,
+        "get_graph_edges" => handle_get_graph_edges(&state).await,
         _ => Err(MoteError::Validation(format!("Method not found: {}", request.method))),
     };
 
@@ -431,6 +432,13 @@ pub async fn handle_claim_direction(
     } else {
         params["conditions"].clone()
     };
+    let parent_ids: Vec<String> = serde_json::from_value(params["parent_ids"].clone())
+        .unwrap_or_default();
+    let provenance = if parent_ids.is_empty() {
+        json!({})
+    } else {
+        json!({ "parent_ids": parent_ids })
+    };
 
     // Expire stale claims before any read/write
     crate::db::queries::expire_stale_claims(&state.pool).await?;
@@ -442,7 +450,7 @@ pub async fn handle_claim_direction(
         statement: hypothesis.clone(),
         conditions: conditions.clone(),
         metrics: None,
-        provenance: json!({}),
+        provenance,
         signature: vec![],
         artifact_tree_hash: None,
         artifact_inline: None,
@@ -645,6 +653,9 @@ pub async fn handle_publish_atoms(
 
         let atom_id = crate::db::queries::publish_atom(&state.pool, &agent_id, atom_input).await?;
 
+        // Auto-register any new condition keys for this domain (no-op if already present)
+        auto_register_conditions(&state.pool, &domain, &conditions).await;
+
         // Update graph cache incrementally
         {
             let mut cache = state.graph_cache.write().await;
@@ -720,6 +731,52 @@ pub async fn handle_publish_atoms(
         }));
 
         published_atoms.push(atom_id);
+    }
+
+    // Insert explicit edges passed with this publish request
+    if let Some(edges_array) = params["edges"].as_array() {
+        for edge in edges_array {
+            let src  = edge["source_atom_id"].as_str().unwrap_or("");
+            let tgt  = edge["target_atom_id"].as_str().unwrap_or("");
+            let etype = edge["edge_type"].as_str().unwrap_or("");
+            if src.is_empty() || tgt.is_empty() || etype.is_empty() { continue; }
+            let valid = matches!(etype, "derived_from"|"inspired_by"|"contradicts"|"replicates"|"summarizes"|"supersedes"|"retracts");
+            if !valid { continue; }
+            sqlx::query(
+                "INSERT INTO edges (source_id, target_id, type) VALUES ($1,$2,$3)
+                 ON CONFLICT (source_id, target_id, type) DO NOTHING"
+            )
+            .bind(src).bind(tgt).bind(etype)
+            .execute(&state.pool)
+            .await
+            .ok(); // non-fatal: edge might reference atoms not yet known
+        }
+    }
+
+    // Also derive edges from parent_ids in each atom's provenance
+    for atom_id in &published_atoms {
+        // Re-fetch the provenance we stored so we can extract parent_ids
+        if let Ok(row) = sqlx::query("SELECT provenance FROM atoms WHERE atom_id = $1")
+            .bind(atom_id)
+            .fetch_one(&state.pool)
+            .await
+        {
+            let prov: serde_json::Value = row.get("provenance");
+            if let Some(parent_ids) = prov["parent_ids"].as_array() {
+                for pid in parent_ids {
+                    if let Some(pid_str) = pid.as_str() {
+                        sqlx::query(
+                            "INSERT INTO edges (source_id, target_id, type) VALUES ($1,$2,'derived_from')
+                             ON CONFLICT (source_id, target_id, type) DO NOTHING"
+                        )
+                        .bind(atom_id).bind(pid_str)
+                        .execute(&state.pool)
+                        .await
+                        .ok();
+                    }
+                }
+            }
+        }
     }
 
     // Increment publish requests accepted counter
@@ -956,6 +1013,32 @@ pub async fn get_exploration_suggestions(
     Ok(exploration_suggestions)
 }
 
+pub async fn handle_get_graph_edges(state: &AppState) -> Result<Value> {
+    let rows = sqlx::query(
+        "SELECT e.source_id, e.target_id, e.type, e.repl_type, e.created_at
+         FROM edges e
+         JOIN atoms a1 ON e.source_id = a1.atom_id AND NOT a1.retracted AND NOT a1.archived
+         JOIN atoms a2 ON e.target_id = a2.atom_id AND NOT a2.retracted AND NOT a2.archived
+         ORDER BY e.created_at ASC"
+    )
+    .fetch_all(&state.pool)
+    .await
+    .map_err(MoteError::Database)?;
+
+    let edges: Vec<Value> = rows.iter().map(|r| {
+        let repl_type: Option<String> = r.get("repl_type");
+        json!({
+            "source_id":  r.get::<String, _>("source_id"),
+            "target_id":  r.get::<String, _>("target_id"),
+            "edge_type":  r.get::<String, _>("type"),
+            "repl_type":  repl_type,
+            "created_at": r.get::<chrono::DateTime<chrono::Utc>, _>("created_at"),
+        })
+    }).collect();
+
+    Ok(json!({ "edges": edges, "count": edges.len() }))
+}
+
 pub async fn handle_get_field_map(
     state: &AppState,
     params: Option<Value>,
@@ -1007,4 +1090,41 @@ pub async fn handle_get_field_map(
         "atoms": result,
         "count": result.len()
     }))
+}
+
+/// Infer a condition_registry value_type from a JSON value.
+fn infer_value_type(v: &serde_json::Value) -> &'static str {
+    match v {
+        serde_json::Value::Number(n) => {
+            if n.is_f64() && n.as_f64().map(|f| f.fract() != 0.0).unwrap_or(false) {
+                "float"
+            } else {
+                "int"
+            }
+        }
+        serde_json::Value::Bool(_) => "string",
+        _ => "string",
+    }
+}
+
+/// Upsert condition keys for a domain into condition_registry on first observation.
+/// All auto-discovered keys start as required=false; humans can promote them later.
+/// Errors are silently ignored — this is best-effort bookkeeping.
+async fn auto_register_conditions(pool: &sqlx::PgPool, domain: &str, conditions: &serde_json::Value) {
+    let Some(obj) = conditions.as_object() else { return };
+    if obj.is_empty() { return }
+
+    for (key, val) in obj {
+        let vtype = infer_value_type(val);
+        let _ = sqlx::query(
+            "INSERT INTO condition_registry (domain, key_name, value_type, unit, required)
+             VALUES ($1, $2, $3, NULL, false)
+             ON CONFLICT (domain, key_name) DO NOTHING"
+        )
+        .bind(domain)
+        .bind(key)
+        .bind(vtype)
+        .execute(pool)
+        .await;
+    }
 }

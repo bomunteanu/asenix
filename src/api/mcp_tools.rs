@@ -205,6 +205,16 @@ pub fn get_all_tools() -> ToolsListResult {
                                 "provenance": {
                                     "type": "object",
                                     "description": "Source and method info e.g. {method_description: '...', parent_ids: []}"
+                                },
+                                "artifact_inline": {
+                                    "type": "object",
+                                    "description": "Attach a result file directly to this atom. Blob wire format: {\"artifact_type\": \"blob\", \"content\": {\"data\": \"<base64-encoded bytes>\"}, \"media_type\": \"application/json\"}. In Python: import base64; data=base64.b64encode(open('results/latest.json','rb').read()).decode(). Tree format: {\"artifact_type\": \"tree\", \"content\": {\"entries\": [{\"name\": \"file.json\", \"hash\": \"<blake3-hex>\", \"type_\": \"blob\"}]}}",
+                                    "properties": {
+                                        "artifact_type": {"type": "string", "enum": ["blob", "tree"]},
+                                        "content": {"type": "object"},
+                                        "media_type": {"type": "string"}
+                                    },
+                                    "required": ["artifact_type", "content"]
                                 }
                             },
                             "required": ["atom_type", "domain", "statement"]
