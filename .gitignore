@@ -4,6 +4,12 @@
 Cargo.lock
 .fastembed_cache/
 
+# Test reports
+test_report.json
+**/test_report.json
+
+tests/mcp-py-tests/__pycache__/
+
 # IDE
 .vscode/
 .idea/

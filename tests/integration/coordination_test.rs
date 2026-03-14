@@ -313,7 +313,7 @@ async fn test_end_to_end_coordination() -> Result<()> {
     assert!(total_edges.count >= 1, "Should have at least 1 contradiction edge");
     
     println!("✅ End-to-end coordination test PASSED");
-    println!("🎯 Mote coordination system is functioning correctly!");
+    println!("🎯 Asenix coordination system is functioning correctly!");
     
     Ok(())
 }

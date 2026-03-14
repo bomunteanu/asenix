@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Mote MCP Client - Official Model Context Protocol Client for Mote
+Asenix MCP Client - Official Model Context Protocol Client for Asenix
 
 Based on the official MCP documentation at agent-docs/MCP.md
-Provides a clean, reusable interface for connecting AI agents to Mote via MCP.
+Provides a clean, reusable interface for connecting AI agents to Asenix via MCP.
 """
 
 import requests
@@ -29,15 +29,15 @@ class MCPResource:
     mime_type: Optional[str] = None
 
 
-class MoteMCPClient:
+class AsenixMCPClient:
     """
-    Official MCP client for Mote research coordination hub.
+    Official MCP client for Asenix research coordination hub.
     
-    Provides session-based access to Mote's research coordination capabilities
+    Provides session-based access to Asenix's research coordination capabilities
     through the Model Context Protocol (MCP).
     
     Example:
-        client = MoteMCPClient("http://localhost:3000")
+        client = AsenixMCPClient("http://localhost:3000")
         client.initialize()
         
         # Register your agent

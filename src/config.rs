@@ -55,6 +55,7 @@ pub struct WorkersConfig {
     pub claim_ttl_hours: u64,
     pub staleness_check_interval_minutes: u64,
     pub bounty_needed_novelty_threshold: f64,
+    pub bounty_sparse_region_max_atoms: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

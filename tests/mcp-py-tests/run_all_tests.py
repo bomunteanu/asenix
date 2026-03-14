@@ -212,7 +212,13 @@ class TestRunner:
             "pgvector HNSW contention test"
         )
         
-        # Test 5: High-intensity load test
+        # Test 5: Bounty worker exploration test
+        exploration_success = self.run_command(
+            "python3 tests/mcp-py-tests/exploration_test.py",
+            "Bounty worker exploration test"
+        )
+
+        # Test 6: High-intensity load test
         intense_success = self.run_command(
             "python3 tests/mcp-py-tests/load_test.py --agents 200 --operations 20 --batches 8",
             "High-intensity load test (200 agents)"

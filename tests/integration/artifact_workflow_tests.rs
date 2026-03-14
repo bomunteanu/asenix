@@ -44,7 +44,7 @@ enable_validation = true
     
     // Start the server in background
     let mut child = Command::new("cargo")
-        .args(&["run", "--bin", "mote", "--", "--config", config_file.to_str().unwrap()])
+        .args(&["run", "--bin", "asenix", "--", "--config", config_file.to_str().unwrap()])
         .spawn()
         .expect("Failed to start server");
     

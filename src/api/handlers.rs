@@ -252,3 +252,25 @@ pub async fn review_atom(
 
     Ok(Json(response))
 }
+
+/// POST /admin/trigger-bounty-tick
+///
+/// Immediately runs one bounty-worker tick against the live database.
+/// Intended for integration tests so they don't have to wait for the periodic timer.
+pub async fn trigger_bounty_tick(
+    State(state): State<Arc<AppState>>,
+) -> std::result::Result<Json<Value>, (StatusCode, String)> {
+    let worker = crate::workers::bounty::BountyWorker::new(
+        state.pool.clone(),
+        state.config.workers.bounty_needed_novelty_threshold,
+        state.config.pheromone.exploration_samples,
+        state.config.pheromone.exploration_density_radius,
+        state.config.hub.embedding_dimension,
+        state.config.workers.bounty_sparse_region_max_atoms,
+    );
+
+    match worker.run_bounty_tick().await {
+        Ok(count) => Ok(Json(json!({ "status": "ok", "bounties_published": count }))),
+        Err(e) => Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
+    }
+}

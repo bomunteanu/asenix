@@ -105,13 +105,23 @@ async fn main() -> anyhow::Result<()> {
         state.config.workers.bounty_needed_novelty_threshold,
         state.sse_broadcast_tx.clone(),
     );
+    let bounty_worker = workers::bounty::BountyWorker::new(
+        state.pool.clone(),
+        state.config.workers.bounty_needed_novelty_threshold,
+        state.config.pheromone.exploration_samples,
+        state.config.pheromone.exploration_density_radius,
+        state.config.hub.embedding_dimension,
+        state.config.workers.bounty_sparse_region_max_atoms,
+    );
 
     // Spawn workers
     let embedding_handle = tokio::spawn(async move {
         embedding_worker.start().await;
     });
-    let claims_handle = tokio::spawn(claims_worker.start());
-    let staleness_handle = tokio::spawn(staleness_worker.start(10)); // 10 minute interval
+    let _claims_handle = tokio::spawn(claims_worker.start());
+    let staleness_interval = state.config.workers.staleness_check_interval_minutes;
+    let _staleness_handle = tokio::spawn(staleness_worker.start(staleness_interval));
+    let _bounty_handle = tokio::spawn(bounty_worker.start(staleness_interval));
 
     // Build router
     let app = Router::new()
@@ -119,6 +129,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/metrics", get(api::handlers::metrics))
         .route("/review", get(api::handlers::get_review_queue))
         .route("/review/:id", post(api::handlers::review_atom))
+        .route("/admin/trigger-bounty-tick", post(api::handlers::trigger_bounty_tick))
         .route("/events", get(api::sse::sse_events))
         .route("/rpc", post(api::rpc::handle_mcp))
         .route("/mcp", post(api::mcp_server::handle_mcp_request)

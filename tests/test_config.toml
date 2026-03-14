@@ -1,7 +1,7 @@
 
 [hub]
 name = "test-hub"
-domain = "test.mote"
+domain = "test.asenix"
 listen_address = "127.0.0.1:8080"
 embedding_endpoint = "http://localhost:11434"
 embedding_model = "nomic-embed-text"
@@ -36,6 +36,7 @@ decay_interval_minutes = 60
 claim_ttl_hours = 24
 staleness_check_interval_minutes = 30
 bounty_needed_novelty_threshold = 0.7
+bounty_sparse_region_max_atoms = 3
 
 [acceptance]
 required_provenance_fields = ["agent_id", "timestamp"]

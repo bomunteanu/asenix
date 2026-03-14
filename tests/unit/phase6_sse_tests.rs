@@ -47,6 +47,7 @@ async fn setup_test_state() -> Arc<AppState> {
             claim_ttl_hours: 24,
             staleness_check_interval_minutes: 30,
             bounty_needed_novelty_threshold: 0.7,
+            bounty_sparse_region_max_atoms: 3,
         },
         acceptance: asenix::config::AcceptanceConfig {
             required_provenance_fields: vec![],

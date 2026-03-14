@@ -46,6 +46,7 @@ fn create_test_config() -> Config {
             claim_ttl_hours: 24,
             staleness_check_interval_minutes: 60,
             bounty_needed_novelty_threshold: 0.7,
+            bounty_sparse_region_max_atoms: 3,
         },
         acceptance: AcceptanceConfig {
             required_provenance_fields: vec!["agent".to_string(), "timestamp".to_string()],

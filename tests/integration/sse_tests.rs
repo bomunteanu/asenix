@@ -18,7 +18,7 @@ use axum::Router;
 /// Build a test app and return (router, broadcast_rx) so tests can listen to SSE events.
 async fn setup_test_app_with_sse() -> (Router, broadcast::Receiver<SseEvent>) {
     let database_url = env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://mote:asenix_password@localhost:5432/asenix_test".to_string());
+        .unwrap_or_else(|_| "postgres://asenix:asenix_password@localhost:5432/asenix_test".to_string());
 
     let config = Config {
         hub: asenix::config::HubConfig {
@@ -58,6 +58,7 @@ async fn setup_test_app_with_sse() -> (Router, broadcast::Receiver<SseEvent>) {
             claim_ttl_hours: 24,
             staleness_check_interval_minutes: 30,
             bounty_needed_novelty_threshold: 0.7,
+            bounty_sparse_region_max_atoms: 3,
         },
         acceptance: asenix::config::AcceptanceConfig {
             required_provenance_fields: vec![],
@@ -200,7 +201,7 @@ async fn test_staleness_worker_emits_synthesis_needed_events() {
     
     // Create a test staleness worker
     let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://mote:asenix_password@localhost:5432/asenix_test".to_string());
+        .unwrap_or_else(|_| "postgres://asenix:asenix_password@localhost:5432/asenix_test".to_string());
     let pool = sqlx::PgPool::connect(&database_url).await.unwrap();
     
     let _staleness_worker = asenix::workers::staleness::StalenessWorker::new(

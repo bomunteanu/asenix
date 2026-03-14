@@ -11,6 +11,7 @@ mod mcp_resources_tests;
 mod rate_limiter_tests;
 // mod mcp_dispatch_tests; // Commented out due to compilation errors
 mod condition_equivalence_working;
+mod bounty_worker_tests;
 mod decay_worker_tests;
 pub mod phase6_sse_tests;
 mod suggestions_tests;

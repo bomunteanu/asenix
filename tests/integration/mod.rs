@@ -34,7 +34,7 @@ use asenix::storage::LocalStorage;
 /// Default test database URL, overridable via DATABASE_URL env var.
 pub fn test_database_url() -> String {
     env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://mote:asenix_password@localhost:5432/asenix_test".to_string())
+        .unwrap_or_else(|_| "postgres://asenix:asenix_password@localhost:5432/asenix_test".to_string())
 }
 
 /// Test helper that sets up a clean database and returns a router ready for testing
@@ -88,6 +88,7 @@ pub async fn setup_test_app() -> Router {
             claim_ttl_hours: 24,
             staleness_check_interval_minutes: 30,
             bounty_needed_novelty_threshold: 0.7,
+            bounty_sparse_region_max_atoms: 3,
         },
         acceptance: asenix::config::AcceptanceConfig {
             required_provenance_fields: vec!["agent_id".to_string(), "timestamp".to_string()],
