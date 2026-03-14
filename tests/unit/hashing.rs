@@ -7,8 +7,8 @@
 //! - Provenance and conditions are properly included
 
 use serde_json::json;
-use mote::domain::atom::{AtomType, Provenance};
-use mote::crypto::hashing::compute_atom_id;
+use asenix::domain::atom::{AtomType, Provenance};
+use asenix::crypto::hashing::compute_atom_id;
 
 fn create_test_provenance() -> Provenance {
     Provenance {

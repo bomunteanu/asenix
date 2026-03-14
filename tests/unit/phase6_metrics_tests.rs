@@ -8,7 +8,7 @@ use tokio::sync::{broadcast, mpsc};
 
 async fn setup_test_state() -> Arc<AppState> {
     let config = Config::default();
-    let pool = sqlx::PgPool::connect("postgresql://test:test@localhost/test_mote")
+    let pool = sqlx::PgPool::connect("postgresql://test:test@localhost/test_asenix")
         .await
         .expect("Failed to connect to test database");
     
@@ -42,11 +42,11 @@ async fn test_prometheus_metrics_format() {
         .expect("Should format metrics successfully");
     
     // Verify Prometheus format
-    assert!(output.contains("# HELP mote_publish_requests_total Total number of publish requests"));
-    assert!(output.contains("# TYPE mote_publish_requests_total counter"));
-    assert!(output.contains("mote_publish_requests_total{status=\"accepted\"} 100"));
-    assert!(output.contains("mote_publish_requests_total{status=\"rejected\"} 10"));
-    assert!(output.contains("mote_publish_requests_total{status=\"queued\"} 250"));
+    assert!(output.contains("# HELP asenix_publish_requests_total Total number of publish requests"));
+    assert!(output.contains("# TYPE asenix_publish_requests_total counter"));
+    assert!(output.contains("asenix_publish_requests_total{status=\"accepted\"} 100"));
+    assert!(output.contains("asenix_publish_requests_total{status=\"rejected\"} 10"));
+    assert!(output.contains("asenix_publish_requests_total{status=\"queued\"} 250"));
     
     assert!(output.contains("# HELP mote_rate_limit_rejections_total Total number of rate limit rejections"));
     assert!(output.contains("mote_rate_limit_rejections_total 5"));

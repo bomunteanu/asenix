@@ -9,25 +9,25 @@ use tower::ServiceExt;
 async fn setup_test_app() -> axum::Router {
     // Create a minimal test app
     axum::Router::new()
-        .route("/mcp", axum::routing::post(mote::api::mcp::handle_mcp))
-        .with_state(std::sync::Arc::new(mote::state::AppState::new(
-            sqlx::PgPool::connect("postgres://mote:mote_password@localhost:5432/mote_test")
+        .route("/mcp", axum::routing::post(asenix::api::mcp::handle_mcp))
+        .with_state(std::sync::Arc::new(asenix::state::AppState::new(
+            sqlx::PgPool::connect("postgres://mote:asenix_password@localhost:5432/asenix_test")
                 .await
                 .expect("Failed to connect to test database"),
-            mote::config::Config {
-                database: mote::config::DatabaseConfig {
-                    url: "postgres://mote:mote_password@localhost:5432/mote_test".to_string(),
+            asenix::config::Config {
+                database: asenix::config::DatabaseConfig {
+                    url: "postgres://mote:asenix_password@localhost:5432/asenix_test".to_string(),
                     max_connections: 5,
                 },
-                hub: mote::config::HubConfig {
+                hub: asenix::config::HubConfig {
                     listen_address: "127.0.0.1:0".to_string(),
                 },
-                embedding: mote::config::EmbeddingConfig {
+                embedding: asenix::config::EmbeddingConfig {
                     model_name: "test-model".to_string(),
                     dimension: 384,
                     batch_size: 32,
                 },
-                rate_limit: mote::config::RateLimitConfig {
+                rate_limit: asenix::config::RateLimitConfig {
                     max_atoms_per_hour: 100,
                 },
             },

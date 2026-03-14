@@ -6,9 +6,9 @@
 use serde_json::json;
 use std::collections::HashMap;
 
-use mote::acceptance::{AcceptancePipeline, AcceptanceDecision, AcceptanceRule};
-use mote::domain::atom::{AtomInput, AtomType, Provenance};
-use mote::domain::agent::Agent;
+use asenix::acceptance::{AcceptancePipeline, AcceptanceDecision, AcceptanceRule};
+use asenix::domain::atom::{AtomInput, AtomType, Provenance};
+use asenix::domain::agent::Agent;
 
 // Mock agent state for testing
 #[derive(Clone)]

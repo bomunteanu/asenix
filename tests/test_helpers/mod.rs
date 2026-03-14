@@ -15,21 +15,21 @@ use tokio::net::TcpListener;
 use axum::{Json, extract::State, Router};
 use tower::ServiceExt;
 
-use mote::api::mcp::handle_mcp;
-use mote::config::{Config, HubConfig, PheromoneConfig, TrustConfig, WorkersConfig, AcceptanceConfig};
-use mote::domain::agent::{AgentRegistration, AgentConfirmation};
-use mote::domain::atom::{AtomInput, AtomType, Provenance};
-use mote::state::AppState;
+use asenix::api::mcp::handle_mcp;
+use asenix::config::{Config, HubConfig, PheromoneConfig, TrustConfig, WorkersConfig, AcceptanceConfig};
+use asenix::domain::agent::{AgentRegistration, AgentConfirmation};
+use asenix::domain::atom::{AtomInput, AtomType, Provenance};
+use asenix::state::AppState;
 
 /// Test database configuration
-pub const TEST_DATABASE_URL: &str = "postgres://mote:mote_password@localhost:5432/mote_test";
+pub const TEST_DATABASE_URL: &str = "postgres://asenix:asenix_password@localhost:5432/asenix_test";
 
 /// Deterministic test configuration
 pub fn create_test_config() -> Config {
     Config {
         hub: HubConfig {
             name: "test-hub".to_string(),
-            domain: "test.mote".to_string(),
+            domain: "test.asenix".to_string(),
             listen_address: "127.0.0.1:0".to_string(),
             embedding_endpoint: "http://localhost:11434".to_string(),
             embedding_model: "nomic-embed-text".to_string(),
@@ -120,10 +120,10 @@ pub async fn create_test_app() -> Result<(Arc<AppState>, Router), anyhow::Error>
     // Create router
     let app = Router::new()
         .route("/mcp", axum::routing::post(handle_mcp))
-        .route("/health", axum::routing::get(mote::api::handlers::health_check))
-        .route("/metrics", axum::routing::get(mote::api::handlers::metrics))
-        .route("/review", axum::routing::get(mote::api::handlers::get_review_queue))
-        .route("/review/:id", axum::routing::post(mote::api::handlers::review_atom))
+        .route("/health", axum::routing::get(asenix::api::handlers::health_check))
+        .route("/metrics", axum::routing::get(asenix::api::handlers::metrics))
+        .route("/review", axum::routing::get(asenix::api::handlers::get_review_queue))
+        .route("/review/:id", axum::routing::post(asenix::api::handlers::review_atom))
         .with_state(state.clone());
     
     Ok((state, app))

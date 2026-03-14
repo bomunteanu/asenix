@@ -10,7 +10,7 @@ async fn setup_test_database() -> PgPool {
     // This would set up a test database
     // For now, we'll create a mock connection
     let database_url = std::env::var("TEST_DATABASE_URL")
-        .unwrap_or_else(|_| "postgresql://test:test@localhost/test_mote".to_string());
+        .unwrap_or_else(|_| "postgresql://test:test@localhost/test_asenix".to_string());
     
     let pool = sqlx::PgPool::connect(&database_url)
         .await

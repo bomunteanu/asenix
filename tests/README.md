@@ -88,7 +88,7 @@ The integration tests are currently being rebuilt after removing legacy code:
 //! More detailed explanation if needed
 
 use serde_json::json;
-use mote::domain::atom::{AtomInput, AtomType};
+use asenix::domain::atom::{AtomInput, AtomType};
 
 #[tokio::test]
 async fn test_specific_functionality() {
@@ -131,7 +131,7 @@ To add a new test file:
 
 1. Create the test file in `tests/unit/`
 2. Add `mod your_test_file;` to `tests/unit/mod.rs`
-3. Ensure all imports use the full crate path: `use mote::module::struct;`
+3. Ensure all imports use the full crate path: `use asenix::module::struct;`
 
 ## Test Categories
 
@@ -229,7 +229,7 @@ Let's say you want to test a new validation function:
 
 ```rust
 // In tests/unit/validation_tests.rs
-use mote::domain::validation::validate_atom_input;
+use asenix::domain::validation::validate_atom_input;
 
 #[tokio::test]
 async fn test_validate_atom_input_success() {

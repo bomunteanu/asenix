@@ -4,8 +4,8 @@
 //! reserved dimension enforcement, and determinism.
 
 use serde_json::json;
-use mote::domain::condition::{ConditionRegistry, ValueType, ConditionValue};
-use mote::embedding::structured::StructuredVectorEncoder;
+use asenix::domain::condition::{ConditionRegistry, ValueType, ConditionValue};
+use asenix::embedding::structured::StructuredVectorEncoder;
 
 fn create_test_encoder() -> StructuredVectorEncoder {
     StructuredVectorEncoder::new(

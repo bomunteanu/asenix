@@ -9,9 +9,9 @@ import json
 import asyncio
 
 # Add the mote_client to path
-sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'mote_client'))
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'asenix_client'))
 
-from mote_mcp_client import MoteMCPClient
+from asenix_mcp_client import AsenixMCPClient
 
 def extract_content(response):
     """Extract content from MCP response format"""
@@ -29,7 +29,7 @@ async def test_exploration_mode():
     # Connect to Mote server
     server_url = "http://localhost:3000"
     
-    client = MoteMCPClient(server_url)
+    client = AsenixMCPClient(server_url)
     client.initialize()
     
     # Register a test agent

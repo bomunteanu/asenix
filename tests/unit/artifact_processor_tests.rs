@@ -1,5 +1,5 @@
-use mote::api::artifact_processor::{InlineArtifact, ArtifactContent, TreeEntry};
-use mote::storage::{StorageBackend, StorageError};
+use asenix::api::artifact_processor::{InlineArtifact, ArtifactContent, TreeEntry};
+use asenix::storage::{StorageBackend, StorageError};
 use blake3::Hasher;
 use hex;
 use tempfile::TempDir;

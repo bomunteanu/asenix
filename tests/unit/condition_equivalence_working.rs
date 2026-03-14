@@ -3,7 +3,7 @@
 //! Tests the ConditionRegistry::is_equivalent method with the actual code structure
 
 use serde_json::json;
-use mote::domain::condition::{ConditionRegistry, ValueType};
+use asenix::domain::condition::{ConditionRegistry, ValueType};
 
 fn create_test_registry() -> Vec<ConditionRegistry> {
     vec![

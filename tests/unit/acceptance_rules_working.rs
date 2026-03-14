@@ -3,11 +3,11 @@
 //! Tests the AcceptancePipeline logic with the actual code structure
 
 use serde_json::json;
-use mote::domain::atom::{AtomInput, AtomType};
+use asenix::domain::atom::{AtomInput, AtomType};
 
 #[tokio::test]
 async fn test_acceptance_pipeline_statement_length_validation() {
-    let pipeline = mote::acceptance::AcceptancePipeline::new();
+    let pipeline = asenix::acceptance::AcceptancePipeline::new();
     
     // Test statement too short (but provide metrics to avoid atom type rule triggering first)
     let short_atom = AtomInput {
@@ -23,7 +23,7 @@ async fn test_acceptance_pipeline_statement_length_validation() {
     };
     
     match pipeline.evaluate_atom(&short_atom) {
-        mote::acceptance::AcceptanceDecision::Reject(reason) => {
+        asenix::acceptance::AcceptanceDecision::Reject(reason) => {
             assert!(reason.contains("too short"));
         },
         _ => panic!("Expected rejection for short statement"),
@@ -43,7 +43,7 @@ async fn test_acceptance_pipeline_statement_length_validation() {
     };
     
     match pipeline.evaluate_atom(&long_atom) {
-        mote::acceptance::AcceptanceDecision::Reject(reason) => {
+        asenix::acceptance::AcceptanceDecision::Reject(reason) => {
             assert!(reason.contains("too long"));
         },
         _ => panic!("Expected rejection for long statement"),
@@ -63,14 +63,14 @@ async fn test_acceptance_pipeline_statement_length_validation() {
     };
     
     match pipeline.evaluate_atom(&valid_length_atom) {
-        mote::acceptance::AcceptanceDecision::Accept => {},
+        asenix::acceptance::AcceptanceDecision::Accept => {},
         _ => panic!("Expected acceptance for valid statement"),
     }
 }
 
 #[tokio::test]
 async fn test_acceptance_pipeline_required_fields_validation() {
-    let pipeline = mote::acceptance::AcceptancePipeline::new();
+    let pipeline = asenix::acceptance::AcceptancePipeline::new();
     
     // Test missing domain
     let no_domain_atom = AtomInput {
@@ -86,7 +86,7 @@ async fn test_acceptance_pipeline_required_fields_validation() {
     };
     
     match pipeline.evaluate_atom(&no_domain_atom) {
-        mote::acceptance::AcceptanceDecision::Reject(reason) => {
+        asenix::acceptance::AcceptanceDecision::Reject(reason) => {
             assert!(reason.contains("Domain is required"));
         },
         _ => panic!("Expected rejection for missing domain"),
@@ -106,7 +106,7 @@ async fn test_acceptance_pipeline_required_fields_validation() {
     };
     
     match pipeline.evaluate_atom(&no_statement_atom) {
-        mote::acceptance::AcceptanceDecision::Reject(reason) => {
+        asenix::acceptance::AcceptanceDecision::Reject(reason) => {
             println!("Actual rejection reason: '{}'", reason);
             assert!(reason.contains("Statement too short") || reason.contains("Statement is required"));
         },
@@ -127,7 +127,7 @@ async fn test_acceptance_pipeline_required_fields_validation() {
     };
     
     match pipeline.evaluate_atom(&no_signature_atom) {
-        mote::acceptance::AcceptanceDecision::Reject(reason) => {
+        asenix::acceptance::AcceptanceDecision::Reject(reason) => {
             assert!(reason.contains("Signature is required"));
         },
         _ => panic!("Expected rejection for missing signature"),
@@ -136,7 +136,7 @@ async fn test_acceptance_pipeline_required_fields_validation() {
 
 #[tokio::test]
 async fn test_acceptance_pipeline_domain_validation() {
-    let pipeline = mote::acceptance::AcceptancePipeline::new();
+    let pipeline = asenix::acceptance::AcceptancePipeline::new();
     
     // Test invalid domain characters
     let invalid_domain_atom = AtomInput {
@@ -152,7 +152,7 @@ async fn test_acceptance_pipeline_domain_validation() {
     };
     
     match pipeline.evaluate_atom(&invalid_domain_atom) {
-        mote::acceptance::AcceptanceDecision::Reject(reason) => {
+        asenix::acceptance::AcceptanceDecision::Reject(reason) => {
             assert!(reason.contains("invalid characters"));
         },
         _ => panic!("Expected rejection for invalid domain characters"),
@@ -172,7 +172,7 @@ async fn test_acceptance_pipeline_domain_validation() {
     };
     
     match pipeline.evaluate_atom(&long_domain_atom) {
-        mote::acceptance::AcceptanceDecision::Reject(reason) => {
+        asenix::acceptance::AcceptanceDecision::Reject(reason) => {
             assert!(reason.contains("too long"));
         },
         _ => panic!("Expected rejection for long domain"),
@@ -192,14 +192,14 @@ async fn test_acceptance_pipeline_domain_validation() {
     };
     
     match pipeline.evaluate_atom(&valid_domain_atom) {
-        mote::acceptance::AcceptanceDecision::Accept => {},
+        asenix::acceptance::AcceptanceDecision::Accept => {},
         _ => panic!("Expected acceptance for valid domain"),
     }
 }
 
 #[tokio::test]
 async fn test_acceptance_pipeline_atom_type_limits() {
-    let pipeline = mote::acceptance::AcceptancePipeline::new();
+    let pipeline = asenix::acceptance::AcceptancePipeline::new();
     
     // Test hypothesis without conditions (should be queued)
     let hypothesis_no_conditions = AtomInput {
@@ -215,7 +215,7 @@ async fn test_acceptance_pipeline_atom_type_limits() {
     };
     
     match pipeline.evaluate_atom(&hypothesis_no_conditions) {
-        mote::acceptance::AcceptanceDecision::Queue(reason) => {
+        asenix::acceptance::AcceptanceDecision::Queue(reason) => {
             assert!(reason.contains("without conditions"));
         },
         _ => panic!("Expected queue for hypothesis without conditions"),
@@ -235,7 +235,7 @@ async fn test_acceptance_pipeline_atom_type_limits() {
     };
     
     match pipeline.evaluate_atom(&finding_no_metrics) {
-        mote::acceptance::AcceptanceDecision::Queue(reason) => {
+        asenix::acceptance::AcceptanceDecision::Queue(reason) => {
             assert!(reason.contains("without metrics"));
         },
         _ => panic!("Expected queue for finding without metrics"),
@@ -255,7 +255,7 @@ async fn test_acceptance_pipeline_atom_type_limits() {
     };
     
     match pipeline.evaluate_atom(&valid_hypothesis) {
-        mote::acceptance::AcceptanceDecision::Accept => {},
+        asenix::acceptance::AcceptanceDecision::Accept => {},
         _ => panic!("Expected acceptance for valid hypothesis"),
     }
     
@@ -273,14 +273,14 @@ async fn test_acceptance_pipeline_atom_type_limits() {
     };
     
     match pipeline.evaluate_atom(&valid_finding) {
-        mote::acceptance::AcceptanceDecision::Accept => {},
+        asenix::acceptance::AcceptanceDecision::Accept => {},
         _ => panic!("Expected acceptance for valid finding"),
     }
 }
 
 #[tokio::test]
 async fn test_acceptance_pipeline_complete_flow() {
-    let pipeline = mote::acceptance::AcceptancePipeline::new();
+    let pipeline = asenix::acceptance::AcceptancePipeline::new();
     
     // Test a completely valid atom that should pass all checks
     let valid_atom = AtomInput {
@@ -308,7 +308,7 @@ async fn test_acceptance_pipeline_complete_flow() {
     };
     
     match pipeline.evaluate_atom(&valid_atom) {
-        mote::acceptance::AcceptanceDecision::Accept => {},
+        asenix::acceptance::AcceptanceDecision::Accept => {},
         _ => panic!("Expected acceptance for completely valid atom"),
     }
 }

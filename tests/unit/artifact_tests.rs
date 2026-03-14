@@ -5,15 +5,15 @@ use axum::{
 use serde_json::json;
 use tower::ServiceExt;
 
-use mote::api::artifacts::*;
-use mote::config::{Config, HubConfig};
-use mote::state::AppState;
-use mote::storage::LocalStorage;
+use asenix::api::artifacts::*;
+use asenix::config::{Config, HubConfig};
+use asenix::state::AppState;
+use asenix::storage::LocalStorage;
 use sqlx::PgPool;
 
 async fn setup_test_app() -> axum::Router {
     // Use a temporary directory for test artifacts
-    let temp_dir = std::env::temp_dir().join("mote_artifact_tests");
+    let temp_dir = std::env::temp_dir().join("asenix_artifact_tests");
     tokio::fs::create_dir_all(&temp_dir).await.unwrap();
 
     // Create test storage

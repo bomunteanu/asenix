@@ -3,7 +3,7 @@
 //! Tests attraction boost calculation, novelty calculation, and contradiction effects
 //! on pheromone components with defined deltas, caps, and normalizations.
 
-use mote::domain::pheromone::{attraction_boost, novelty, disagreement, decay_attraction, metrics_contradict, extract_metric_value, is_higher_better};
+use asenix::domain::pheromone::{attraction_boost, novelty, disagreement, decay_attraction, metrics_contradict, extract_metric_value, is_higher_better};
 use serde_json::json;
 
 #[test]

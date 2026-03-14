@@ -45,18 +45,18 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
-RUN useradd --create-home --shell /bin/bash mote
+RUN useradd --create-home --shell /bin/bash asenix
 
 WORKDIR /app
 
 # Copy the binary from builder stage
-COPY --from=builder /app/target/release/mote /usr/local/bin/mote
+COPY --from=builder /app/target/release/asenix /usr/local/bin/asenix
 
 # Copy migrations
 COPY --from=builder /app/migrations ./migrations
 
 # Create config directory
-RUN mkdir -p /app/config && chown -R mote:mote /app
+RUN mkdir -p /app/config && chown -R asenix:asenix /app
 
 # Copy example config and rename it
 COPY config.example.toml /app/config/
@@ -74,4 +74,4 @@ HEALTHCHECK --interval=10s --timeout=5s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:3000/health || exit 1
 
 # Run the application
-CMD ["mote", "--config", "/app/config/config.toml"]
+CMD ["asenix", "--config", "/app/config/config.toml"]

@@ -9,7 +9,7 @@ use tokio::sync::{broadcast, mpsc};
 
 async fn setup_test_state() -> Arc<AppState> {
     let config = Config::default();
-    let pool = sqlx::PgPool::connect("postgresql://test:test@localhost/test_mote")
+    let pool = sqlx::PgPool::connect("postgresql://test:test@localhost/test_asenix")
         .await
         .expect("Failed to connect to test database");
     

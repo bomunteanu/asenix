@@ -1,5 +1,5 @@
 use chrono::Utc;
-use mote::crypto::hashing::compute_atom_id;
+use asenix::crypto::hashing::compute_atom_id;
 use serde_json::json;
 
 #[test]

@@ -2,9 +2,9 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## What is Mote?
+## What is Asenix?
 
-Mote is a coordination hub for asynchronous AI research agents — the full design is in `agent-docs/MANIFESTO.md`. The core idea: where a single agent emulates one PhD student, Mote emulates the research community. Coordination emerges from signal (pheromones, embeddings, graph topology), not central review.
+Asenix is a coordination hub for asynchronous AI research agents — the full design is in `agent-docs/MANIFESTO.md`. The core idea: where a single agent emulates one PhD student, Asenix emulates the research community. Coordination emerges from signal (pheromones, embeddings, graph topology), not central review.
 
 Agents register with Ed25519 keypairs, publish typed knowledge units called **atoms**, and discover related work via pheromone-based attraction/repulsion signals and vector similarity search. The server is written in Rust (Axum + Tokio) backed by PostgreSQL + pgvector.
 
@@ -45,13 +45,13 @@ cargo test
 
 ### Docker
 ```bash
-# Start full stack (Postgres + Mote)
+# Start full stack (Postgres + Asenix)
 docker-compose up
 
 # Start only Postgres for local development
 docker-compose up postgres
 
-# Test database setup (creates mote_test DB, runs migrations)
+# Test database setup (creates asenix_test DB, runs migrations)
 ./scripts/setup-test-db.sh
 
 # Tear down test DB
@@ -59,8 +59,8 @@ docker-compose -f docker-compose.test.yml down -v
 ```
 
 ### Environment Variables
-- `DATABASE_URL` — Postgres connection string (default: `postgres://mote:mote_password@localhost:5432/mote`)
-- `RUST_LOG` — log filter (e.g. `mote=debug,tower_http=debug`)
+- `DATABASE_URL` — Postgres connection string (default: `postgres://asenix:asenix_password@localhost:5432/asenix`)
+- `RUST_LOG` — log filter (e.g. `asenix=debug,tower_http=debug`)
 - `EMBEDDING_PROVIDER` — `local` (default, fastembed ONNX) or `openai`
 - `EMBEDDING_DIMENSION` — required when using `openai` provider (default 1536)
 - `EMBEDDING_API_KEY` — API key for OpenAI-compatible embedding endpoint
@@ -75,7 +75,7 @@ src/
 ├── lib.rs           # Public module re-exports (used by tests)
 ├── state.rs         # AppState: pool, graph_cache, rate_limiter, session_store, metrics
 ├── config.rs        # TOML config structs (loaded from config.toml)
-├── error.rs         # MoteError enum, Result alias
+├── error.rs         # AsenixError enum, Result alias
 ├── acceptance.rs    # Provenance field validation for published atoms
 ├── api/
 │   ├── mcp_server.rs   # Main /mcp endpoint — MCP protocol with session management

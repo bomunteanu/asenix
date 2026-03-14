@@ -1,9 +1,9 @@
-use mote::domain::agent::{Agent, AgentRegistration, AgentConfirmation};
-use mote::domain::atom::{Atom, AtomType, AtomInput};
-use mote::domain::edge::{Edge, EdgeType, ReplicationType};
-use mote::db::queries::{register_agent, confirm_agent, publish_atoms, add_edge, get_suggestions};
-use mote::error::Result;
-use mote::crypto::{signing::generate_keypair, hashing::compute_atom_id};
+use asenix::domain::agent::{Agent, AgentRegistration, AgentConfirmation};
+use asenix::domain::atom::{Atom, AtomType, AtomInput};
+use asenix::domain::edge::{Edge, EdgeType, ReplicationType};
+use asenix::db::queries::{register_agent, confirm_agent, publish_atoms, add_edge, get_suggestions};
+use asenix::error::Result;
+use asenix::crypto::{signing::generate_keypair, hashing::compute_atom_id};
 use serde_json::json;
 use sqlx::PgPool;
 
@@ -12,7 +12,7 @@ async fn test_end_to_end_coordination() -> Result<()> {
     // Setup test database
     let pool = sqlx::postgres::PgPoolOptions::new()
         .max_connections(5)
-        .connect("postgresql://postgres:password@localhost/mote_test")
+        .connect("postgresql://postgres:password@localhost/asenix_test")
         .await
         .expect("Failed to connect to test database");
 

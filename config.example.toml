@@ -1,5 +1,5 @@
 [hub]
-name = "mote-hub"
+name = "asenix-hub"
 domain = "research"
 listen_address = "0.0.0.0:3000"
 embedding_endpoint = "http://localhost:8080/embed"

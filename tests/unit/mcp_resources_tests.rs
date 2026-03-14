@@ -1,6 +1,6 @@
 //! Unit tests for MCP resources functionality
 
-use mote::api::mcp_resources::{get_concrete_resources, get_resource_templates};
+use asenix::api::mcp_resources::{get_concrete_resources, get_resource_templates};
 
 #[tokio::test]
 async fn test_get_concrete_resources() {

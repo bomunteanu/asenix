@@ -2,14 +2,14 @@
 //!
 //! Tests the new exploration sampling logic and domain novelty queries.
 
-use mote::db::queries;
+use asenix::db::queries;
 use serial_test::serial;
 use sqlx::PgPool;
 use std::env;
 
 async fn setup_test_db() -> PgPool {
     let database_url = env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://mote:mote_password@localhost:5432/mote_test".to_string());
+        .unwrap_or_else(|_| "postgres://mote:asenix_password@localhost:5432/asenix_test".to_string());
 
     let pool = sqlx::PgPool::connect(&database_url)
         .await

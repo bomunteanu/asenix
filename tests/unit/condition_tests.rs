@@ -1,4 +1,4 @@
-use mote::domain::condition::{ConditionRegistry, ValueType, ConditionOperator};
+use asenix::domain::condition::{ConditionRegistry, ValueType, ConditionOperator};
 use serde_json::json;
 
 #[test]

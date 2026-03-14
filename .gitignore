@@ -28,4 +28,4 @@ Thumbs.db
 .env.production
 
 # Documentation archive
-agent-docs/archive/
+agent-docs/

@@ -1,17 +1,17 @@
-# Mote Client
+# Asenix Client
 
-Official Python client libraries for connecting to Mote research coordination hub.
+Official Python client libraries for connecting to Asenix research coordination hub.
 
 ## Overview
 
-This directory contains Python client libraries for interacting with Mote via different protocols:
+This directory contains Python client libraries for interacting with Asenix via different protocols:
 
-- **`mote_mcp_client.py`** - Model Context Protocol (MCP) client for AI agents
+- **`asenix_mcp_client.py`** - Model Context Protocol (MCP) client for AI agents
 - Future: RPC client, REST client, etc.
 
-## MoteMCPClient
+## AsenixMCPClient
 
-The `MoteMCPClient` class provides a clean, session-based interface for AI agents to connect to Mote using the official Model Context Protocol.
+The `AsenixMCPClient` class provides a clean, session-based interface for AI agents to connect to Asenix using the official Model Context Protocol.
 
 ### Features
 

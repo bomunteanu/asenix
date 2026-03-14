@@ -5,7 +5,7 @@
 //! of atom comparison and graph traversal.
 
 use serde_json::json;
-use mote::domain::condition::{ConditionRegistry, ValueType, ConditionValue, ConditionOperator};
+use asenix::domain::condition::{ConditionRegistry, ValueType, ConditionValue, ConditionOperator};
 
 fn create_test_registry() -> ConditionRegistry {
     let mut registry = ConditionRegistry::new();

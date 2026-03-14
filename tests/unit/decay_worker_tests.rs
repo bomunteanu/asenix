@@ -3,8 +3,8 @@
 //! Tests the decay worker functionality including batch updates, statistics,
 //! and proper handling of edge cases.
 
-use mote::workers::decay::DecayStats;
-use mote::config::{Config, PheromoneConfig, HubConfig, TrustConfig, WorkersConfig, AcceptanceConfig, McpConfig};
+use asenix::workers::decay::DecayStats;
+use asenix::config::{Config, PheromoneConfig, HubConfig, TrustConfig, WorkersConfig, AcceptanceConfig, McpConfig};
 use std::time::Duration;
 
 fn create_test_config() -> Config {
@@ -89,7 +89,7 @@ async fn test_decay_stats_structure() {
 #[tokio::test]
 async fn test_decay_calculation_edge_cases() {
     // Test the mathematical decay calculation directly
-    use mote::domain::pheromone::decay_attraction;
+    use asenix::domain::pheromone::decay_attraction;
     
     // Test decay to zero
     let result = decay_attraction(0.0005, 168.0, 168.0, 0.001);
@@ -190,7 +190,7 @@ async fn test_decay_worker_error_handling() {
     // Test error scenarios that don't require database
     
     // Test with invalid floor_threshold
-    use mote::domain::pheromone::decay_attraction;
+    use asenix::domain::pheromone::decay_attraction;
     
     let result = decay_attraction(10.0, 24.0, 168.0, -0.1); // Negative floor
     assert!(result >= 0.0, "Should handle negative floor gracefully");

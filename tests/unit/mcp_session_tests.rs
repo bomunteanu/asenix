@@ -1,6 +1,6 @@
 //! Unit tests for MCP session management
 
-use mote::api::mcp_session::{SessionStore, ClientInfo, Capabilities, ToolsCapability, ResourcesCapability};
+use asenix::api::mcp_session::{SessionStore, ClientInfo, Capabilities, ToolsCapability, ResourcesCapability};
 use std::time::Duration;
 
 #[tokio::test]

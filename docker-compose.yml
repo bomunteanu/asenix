@@ -2,27 +2,27 @@ services:
   postgres:
     image: pgvector/pgvector:pg17
     environment:
-      POSTGRES_DB: mote
-      POSTGRES_USER: mote
-      POSTGRES_PASSWORD: mote_password
+      POSTGRES_DB: asenix
+      POSTGRES_USER: asenix
+      POSTGRES_PASSWORD: asenix_password
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mote -d mote"]
+      test: ["CMD-SHELL", "pg_isready -U asenix -d asenix"]
       interval: 5s
       timeout: 5s
       retries: 5
 
-  mote:
+  asenix:
     build:
       context: .
       dockerfile: Dockerfile
     ports:
       - "3000:3000"
     environment:
-      DATABASE_URL: postgres://mote:mote_password@postgres:5432/mote
+      DATABASE_URL: postgres://asenix:asenix_password@postgres:5432/asenix
     depends_on:
       postgres:
         condition: service_healthy

@@ -23,8 +23,8 @@ mod acceptance;
 mod storage;
 
 #[derive(Parser)]
-#[command(name = "mote")]
-#[command(about = "Mote coordination hub for asynchronous AI research agents")]
+#[command(name = "asenix")]
+#[command(about = "Asenix coordination hub for asynchronous AI research agents")]
 struct Args {
     #[arg(short, long, default_value = "config.toml")]
     config: PathBuf,
@@ -38,7 +38,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "mote=debug,tower_http=debug,axum=debug".into()),
+                .unwrap_or_else(|_| "asenix=debug,tower_http=debug,axum=debug".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();
@@ -50,7 +50,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Get database URL from environment or use default
     let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://mote:mote_password@localhost:5432/mote".to_string());
+        .unwrap_or_else(|_| "postgres://asenix:asenix_password@localhost:5432/asenix".to_string());
 
     // Create database connection pool
     let pool = db::pool::create_pool(&config, &database_url).await?;
@@ -136,7 +136,7 @@ async fn main() -> anyhow::Result<()> {
 
     // Start server
     let listener = tokio::net::TcpListener::bind(&config.hub.listen_address).await?;
-    tracing::info!("Mote server listening on {}", config.hub.listen_address);
+    tracing::info!("Asenix server listening on {}", config.hub.listen_address);
 
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal(

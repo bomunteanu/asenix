@@ -1,6 +1,6 @@
 use serde_json::json;
 use std::path::PathBuf;
-use mote::config::Config;
+use asenix::config::Config;
 
 #[cfg(test)]
 mod tests {
@@ -12,7 +12,7 @@ mod tests {
         let config = Config::load_from_file(&config_path).unwrap();
         
         assert_eq!(config.hub.name, "test-hub");
-        assert_eq!(config.hub.domain, "test.mote");
+        assert_eq!(config.hub.domain, "test.asenix");
         assert_eq!(config.hub.embedding_dimension, 768);
         assert_eq!(config.hub.structured_vector_reserved_dims, 10);
         assert_eq!(config.hub.dims_per_numeric_key, 2);

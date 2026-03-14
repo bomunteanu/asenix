@@ -13,6 +13,9 @@ import time
 import json
 import requests
 from pathlib import Path
+import sys
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', '..', '..', 'asenix_client'))
+from asenix_mcp_client import AsenixMCPClient
 from typing import Dict, List, Tuple
 
 class TestEnvironment:
@@ -43,7 +46,7 @@ class TestEnvironment:
             return False
             
         # Set environment variables for tests
-        os.environ["DATABASE_URL"] = f"postgres://mote:mote_password@localhost:5432/{self.test_db_name}"
+        os.environ["DATABASE_URL"] = f"postgres://asenix:asenix_password@localhost:5432/{self.test_db_name}"
         
         print("✅ Test environment setup complete")
         return True
@@ -113,8 +116,8 @@ allowed_origins = ["http://localhost:3000", "https://localhost:3000"]
             for attempt in range(max_attempts):
                 try:
                     result = subprocess.run([
-                        "docker", "exec", "mote-postgres-1", 
-                        "psql", "-U", "mote", "-d", "postgres", 
+                        "docker", "exec", "asenix-postgres-1", 
+                        "psql", "-U", "asenix", "-d", "asenix", 
                         "-c", "SELECT 1"
                     ], capture_output=True, text=True, timeout=5)
                     if result.returncode == 0:
@@ -128,8 +131,8 @@ allowed_origins = ["http://localhost:3000", "https://localhost:3000"]
             # Create test database
             create_db_cmd = f"CREATE DATABASE {self.test_db_name}"
             result = subprocess.run([
-                "docker", "exec", "mote-postgres-1",
-                "psql", "-U", "mote", "-d", "postgres",
+                "docker", "exec", "asenix-postgres-1",
+                "psql", "-U", "asenix", "-d", "asenix",
                 "-c", create_db_cmd
             ], capture_output=True, text=True)
             
@@ -138,7 +141,7 @@ allowed_origins = ["http://localhost:3000", "https://localhost:3000"]
                 return False
             
             # Run migrations on test database
-            test_db_url = f"postgres://mote:mote_password@localhost:5432/{self.test_db_name}"
+            test_db_url = f"postgres://asenix:asenix_password@localhost:5432/{self.test_db_name}"
             result = subprocess.run([
                 "sqlx", "migrate", "run", "--source", "migrations"
             ], env={**os.environ, "DATABASE_URL": test_db_url}, 
@@ -171,8 +174,8 @@ allowed_origins = ["http://localhost:3000", "https://localhost:3000"]
         try:
             drop_db_cmd = f"DROP DATABASE IF EXISTS {self.test_db_name}"
             result = subprocess.run([
-                "docker", "exec", "mote-postgres-1",
-                "psql", "-U", "mote", "-d", "postgres",
+                "docker", "exec", "asenix-postgres-1",
+                "psql", "-U", "asenix", "-d", "asenix",
                 "-c", drop_db_cmd
             ], capture_output=True, text=True)
             

@@ -1,6 +1,6 @@
-# Mote Agents
+# Asenix Agents
 
-This directory contains autonomous agents that interact with the Mote research coordination system.
+This directory contains autonomous agents that interact with the Asenix research coordination system.
 
 ## Organizer Agent
 
@@ -14,17 +14,17 @@ The organizer agent (`organizer_agent.py`) is an autonomous Python agent that:
 
 The organizer agent requires the following environment variables:
 
-- `MOTE_SERVER_URL`: URL of the Mote server (default: `http://localhost:3000`)
-- `MOTE_AGENT_PRIVATE_KEY`: Ed25519 private key in PEM format
-- `MOTE_AGENT_PUBLIC_KEY`: Ed25519 public key in PEM format
+- `ASENIX_SERVER_URL`: URL of the Asenix server (default: `http://localhost:3000`)
+- `ASENIX_AGENT_PRIVATE_KEY`: Ed25519 private key in PEM format
+- `ASENIX_AGENT_PUBLIC_KEY`: Ed25519 public key in PEM format
 
 ### Running the Organizer Agent
 
 ```bash
 # Set environment variables
-export MOTE_SERVER_URL="http://localhost:3000"
-export MOTE_AGENT_PRIVATE_KEY="$(cat private_key.pem)"
-export MOTE_AGENT_PUBLIC_KEY="$(cat public_key.pem)"
+export ASENIX_SERVER_URL="http://localhost:3000"
+export ASENIX_AGENT_PRIVATE_KEY="$(cat private_key.pem)"
+export ASENIX_AGENT_PUBLIC_KEY="$(cat public_key.pem)"
 
 # Run the agent
 python3 agents/organizer_agent.py
@@ -70,7 +70,7 @@ openssl pkey -in private_key.pem -pubout -out public_key.pem
 ## Future Agents
 
 Additional agents can be added to this directory following the same pattern:
-- Use the `mote_mcp_client` for MCP tool calls
+- Use the `asenix_mcp_client` for MCP tool calls
 - Subscribe to SSE events for real-time coordination
 - Implement exponential backoff for robustness
 - Follow the authentication pattern with API tokens

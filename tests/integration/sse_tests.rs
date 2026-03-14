@@ -8,22 +8,22 @@ use super::{initialize_session, make_tool_call};
 use std::sync::Arc;
 use std::env;
 use tokio::sync::{mpsc, broadcast};
-use mote::config::Config;
-use mote::state::{AppState, SseEvent};
-use mote::api;
-use mote::db::pool::create_pool;
-use mote::storage::LocalStorage;
+use asenix::config::Config;
+use asenix::state::{AppState, SseEvent};
+use asenix::api;
+use asenix::db::pool::create_pool;
+use asenix::storage::LocalStorage;
 use axum::Router;
 
 /// Build a test app and return (router, broadcast_rx) so tests can listen to SSE events.
 async fn setup_test_app_with_sse() -> (Router, broadcast::Receiver<SseEvent>) {
     let database_url = env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://mote:mote_password@localhost:5432/mote_test".to_string());
+        .unwrap_or_else(|_| "postgres://mote:asenix_password@localhost:5432/asenix_test".to_string());
 
     let config = Config {
-        hub: mote::config::HubConfig {
+        hub: asenix::config::HubConfig {
             name: "test-hub".to_string(),
-            domain: "test.mote".to_string(),
+            domain: "test.asenix".to_string(),
             listen_address: "127.0.0.1:8080".to_string(),
             embedding_endpoint: "http://localhost:11434".to_string(),
             embedding_model: "nomic-embed-text".to_string(),
@@ -38,7 +38,7 @@ async fn setup_test_app_with_sse() -> (Router, broadcast::Receiver<SseEvent>) {
             max_artifact_blob_bytes: 1048576,
             max_artifact_storage_per_agent_bytes: 10485760,
         },
-        pheromone: mote::config::PheromoneConfig {
+        pheromone: asenix::config::PheromoneConfig {
             decay_half_life_hours: 24,
             attraction_cap: 10.0,
             novelty_radius: 0.5,
@@ -46,23 +46,23 @@ async fn setup_test_app_with_sse() -> (Router, broadcast::Receiver<SseEvent>) {
             exploration_samples: 10,
             exploration_density_radius: 0.5,
         },
-        trust: mote::config::TrustConfig {
+        trust: asenix::config::TrustConfig {
             reliability_threshold: 0.7,
             independence_ancestry_depth: 5,
             probation_atom_count: 10,
             max_atoms_per_hour: 100,
         },
-        workers: mote::config::WorkersConfig {
+        workers: asenix::config::WorkersConfig {
             embedding_pool_size: 4,
             decay_interval_minutes: 60,
             claim_ttl_hours: 24,
             staleness_check_interval_minutes: 30,
             bounty_needed_novelty_threshold: 0.7,
         },
-        acceptance: mote::config::AcceptanceConfig {
+        acceptance: asenix::config::AcceptanceConfig {
             required_provenance_fields: vec![],
         },
-        mcp: mote::config::McpConfig {
+        mcp: asenix::config::McpConfig {
             allowed_origins: vec!["http://localhost:3000".to_string()],
         },
     };
@@ -200,10 +200,10 @@ async fn test_staleness_worker_emits_synthesis_needed_events() {
     
     // Create a test staleness worker
     let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://mote:mote_password@localhost:5432/mote_test".to_string());
+        .unwrap_or_else(|_| "postgres://mote:asenix_password@localhost:5432/asenix_test".to_string());
     let pool = sqlx::PgPool::connect(&database_url).await.unwrap();
     
-    let _staleness_worker = mote::workers::staleness::StalenessWorker::new(
+    let _staleness_worker = asenix::workers::staleness::StalenessWorker::new(
         pool,
         0.5, // neighbourhood_radius
         0.7, // bounty_threshold
@@ -215,7 +215,7 @@ async fn test_staleness_worker_emits_synthesis_needed_events() {
     // and that events can be sent through the same channel type
     
     // Send a test event through the channel to verify connectivity
-    let test_event = mote::state::SseEvent {
+    let test_event = asenix::state::SseEvent {
         event_type: "synthesis_needed".to_string(),
         data: serde_json::json!({
             "type": "synthesis_needed",

@@ -25,16 +25,16 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::broadcast;
 use serde_json::json;
-use mote::config::Config;
-use mote::state::AppState;
-use mote::api;
-use mote::db::pool::create_pool;
-use mote::storage::LocalStorage;
+use asenix::config::Config;
+use asenix::state::AppState;
+use asenix::api;
+use asenix::db::pool::create_pool;
+use asenix::storage::LocalStorage;
 
 /// Default test database URL, overridable via DATABASE_URL env var.
 pub fn test_database_url() -> String {
     env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://mote:mote_password@localhost:5432/mote_test".to_string())
+        .unwrap_or_else(|_| "postgres://mote:asenix_password@localhost:5432/asenix_test".to_string())
 }
 
 /// Test helper that sets up a clean database and returns a router ready for testing
@@ -51,9 +51,9 @@ pub async fn setup_test_app() -> Router {
     }
     
     let config = Config {
-        hub: mote::config::HubConfig {
+        hub: asenix::config::HubConfig {
             name: "test-hub".to_string(),
-            domain: "test.mote".to_string(),
+            domain: "test.asenix".to_string(),
             listen_address: "127.0.0.1:8080".to_string(),
             embedding_endpoint: "http://localhost:11434".to_string(),
             embedding_model: "nomic-embed-text".to_string(),
@@ -68,7 +68,7 @@ pub async fn setup_test_app() -> Router {
             max_artifact_blob_bytes: 1048576,  // 1MB for tests
             max_artifact_storage_per_agent_bytes: 10485760,  // 10MB for tests
         },
-        pheromone: mote::config::PheromoneConfig {
+        pheromone: asenix::config::PheromoneConfig {
             decay_half_life_hours: 24,
             attraction_cap: 10.0,
             novelty_radius: 0.5,
@@ -76,23 +76,23 @@ pub async fn setup_test_app() -> Router {
             exploration_samples: 10,
             exploration_density_radius: 0.5,
         },
-        trust: mote::config::TrustConfig {
+        trust: asenix::config::TrustConfig {
             reliability_threshold: 0.7,
             independence_ancestry_depth: 5,
             probation_atom_count: 10,
             max_atoms_per_hour: 100,
         },
-        workers: mote::config::WorkersConfig {
+        workers: asenix::config::WorkersConfig {
             embedding_pool_size: 4,
             decay_interval_minutes: 60,
             claim_ttl_hours: 24,
             staleness_check_interval_minutes: 30,
             bounty_needed_novelty_threshold: 0.7,
         },
-        acceptance: mote::config::AcceptanceConfig {
+        acceptance: asenix::config::AcceptanceConfig {
             required_provenance_fields: vec!["agent_id".to_string(), "timestamp".to_string()],
         },
-        mcp: mote::config::McpConfig {
+        mcp: asenix::config::McpConfig {
             allowed_origins: vec!["http://localhost:3000".to_string(), "https://localhost:3000".to_string()],
         },
     };

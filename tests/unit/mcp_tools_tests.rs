@@ -1,6 +1,6 @@
 //! Unit tests for MCP tools functionality
 
-use mote::api::mcp_tools::get_all_tools;
+use asenix::api::mcp_tools::get_all_tools;
 use serde_json::json;
 
 #[tokio::test]

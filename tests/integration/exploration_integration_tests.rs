@@ -130,7 +130,7 @@ async fn test_domain_novelty_stats() {
         }
     }
 
-    let stats = mote::db::queries::get_domain_novelty_stats(&pool).await.unwrap();
+    let stats = asenix::db::queries::get_domain_novelty_stats(&pool).await.unwrap();
 
     assert_eq!(stats.len(), 3);
 

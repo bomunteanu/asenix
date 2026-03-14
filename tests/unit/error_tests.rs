@@ -1,4 +1,4 @@
-use mote::error::MoteError;
+use asenix::error::MoteError;
 
 #[cfg(test)]
 mod tests {

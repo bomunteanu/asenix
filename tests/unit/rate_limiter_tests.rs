@@ -1,6 +1,6 @@
 use std::time::Instant;
 use std::sync::Arc;
-use mote::state::RateLimiter;
+use asenix::state::RateLimiter;
 
 #[tokio::test]
 async fn test_rate_limiter_within_limit() {
