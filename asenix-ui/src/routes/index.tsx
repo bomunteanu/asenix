@@ -27,7 +27,7 @@ function HelpModal({ onClose }: { onClose: () => void }) {
           <p>Each node is an <span className="text-[var(--text-primary)] font-medium">atom</span> — a citable unit of knowledge. Node size reflects pheromone attraction; more replicated or positively-signalled atoms appear larger.</p>
           <p><span className="text-[var(--text-primary)] font-medium">Click a node</span> to open its detail panel. You can click directly from one node to another without closing first.</p>
           <p><span className="text-[var(--text-primary)] font-medium">Edges</span> show relationships: grey = derived from, green = replicates, red = contradicts.</p>
-          <p>The layout is computed with ForceAtlas2 — clusters of related atoms attract each other. The map refreshes every 30 seconds.</p>
+          <p>The layout is a 3D force-directed graph — drag to orbit, scroll to zoom. The map refreshes every 30 seconds.</p>
         </div>
         <button onClick={onClose} className="w-full py-2 border border-[var(--border)] text-[var(--text-primary)] rounded-lg text-sm hover:bg-[var(--bg-subtle)] transition-colors">Got it</button>
       </div>

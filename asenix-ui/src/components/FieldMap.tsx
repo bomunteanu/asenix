@@ -1,236 +1,111 @@
-import { useEffect, useRef } from 'react'
-import Sigma from 'sigma'
-import Graph from 'graphology'
-import forceAtlas2 from 'graphology-layout-forceatlas2'
-import { UMAP } from 'umap-js'
+import { useCallback, useRef, useEffect, useState } from 'react'
+import ForceGraph3D from 'react-force-graph-3d'
 import type { Atom, Edge } from '#/lib/bindings'
 import { getChartColors } from '#/lib/chart-utils'
-import { useTheme } from '#/stores/theme'
 
 interface FieldMapProps {
   atoms: Atom[]
   edges: Edge[]
-  embeddings: Record<string, number[]>   // atom_id → 384-dim vector
+  embeddings: Record<string, number[]>
   onNodeClick: (atom: Atom) => void
-  highlightedAtoms?: Set<string>         // atom_ids to visually highlight (recently published)
+  highlightedAtoms?: Set<string>
 }
 
-// Compute 2-D positions from embedding vectors using UMAP.
-// Atoms without an embedding fall back to a circle on the periphery.
-function computePositions(
-  atoms: Atom[],
-  embeddings: Record<string, number[]>,
-): Record<string, { x: number; y: number }> {
-  const withEmb = atoms.filter(a => embeddings[a.atom_id])
-  const withoutEmb = atoms.filter(a => !embeddings[a.atom_id])
+interface GraphNode {
+  id: string
+  atom: Atom
+}
 
-  const positions: Record<string, { x: number; y: number }> = {}
+interface GraphLink {
+  source: string
+  target: string
+  edge_type: string
+}
 
-  if (withEmb.length >= 4) {
-    const matrix = withEmb.map(a => embeddings[a.atom_id] as number[])
+export default function FieldMap({ atoms, edges, onNodeClick, highlightedAtoms }: FieldMapProps) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [dimensions, setDimensions] = useState({ width: 800, height: 600 })
 
-    // Seeded PRNG (mulberry32) so UMAP produces the same layout for the same data
-    const seed = 0xdeadbeef
-    let s = seed
-    const seededRandom = () => { s |= 0; s = s + 0x6d2b79f5 | 0; let t = Math.imul(s ^ s >>> 15, 1 | s); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296 }
-
-    const umap = new UMAP({
-      nComponents: 2,
-      nNeighbors: Math.min(15, withEmb.length - 1),
-      minDist: 0.1,
-      spread: 1.0,
-      random: seededRandom,
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const obs = new ResizeObserver(entries => {
+      const e = entries[0]
+      if (e) setDimensions({ width: e.contentRect.width, height: e.contentRect.height })
     })
-    const coords = umap.fit(matrix) as number[][] // number[][] shape [n, 2]
+    obs.observe(el)
+    setDimensions({ width: el.clientWidth, height: el.clientHeight })
+    return () => obs.disconnect()
+  }, [])
 
-    // Normalise to [-100, 100]
-    const xs = coords.map(c => c[0] as number)
-    const ys = coords.map(c => c[1] as number)
-    const minX = Math.min(...xs), maxX = Math.max(...xs)
-    const minY = Math.min(...ys), maxY = Math.max(...ys)
-    const rangeX = maxX - minX || 1
-    const rangeY = maxY - minY || 1
-
-    withEmb.forEach((atom, i) => {
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-      const row = coords[i]!
-      positions[atom.atom_id] = {
-        x: ((row[0]! - minX) / rangeX - 0.5) * 200,
-        y: ((row[1]! - minY) / rangeY - 0.5) * 200,
-      }
-    })
-  } else {
-    // Not enough embeddings yet — fall back to circle for all
-    atoms.forEach((atom, i) => {
-      const angle = (2 * Math.PI * i) / Math.max(atoms.length, 1)
-      positions[atom.atom_id] = { x: Math.cos(angle) * 100, y: Math.sin(angle) * 100 }
-    })
-    return positions
+  const graphData = {
+    nodes: atoms.map(atom => ({ id: atom.atom_id, atom })) as GraphNode[],
+    links: edges
+      .filter(e => atoms.some(a => a.atom_id === e.source_id) && atoms.some(a => a.atom_id === e.target_id))
+      .map(e => ({ source: e.source_id, target: e.target_id, edge_type: e.edge_type })) as GraphLink[],
   }
 
-  // Unembedded atoms go on an outer ring
-  withoutEmb.forEach((atom, i) => {
-    const angle = (2 * Math.PI * i) / Math.max(withoutEmb.length, 1)
-    positions[atom.atom_id] = { x: Math.cos(angle) * 260, y: Math.sin(angle) * 260 }
-  })
-
-  return positions
-}
-
-export default function FieldMap({ atoms, edges, embeddings, onNodeClick, highlightedAtoms }: FieldMapProps) {
-  const theme = useTheme(state => state.theme)
-  const containerRef = useRef<HTMLDivElement>(null)
-  const sigmaRef = useRef<Sigma | null>(null)
-  const hoverNodeRef = useRef<string | null>(null)
-  // Ref so the main build effect can read the current highlight set without depending on it
-  const highlightedAtomsRef = useRef(highlightedAtoms)
-  highlightedAtomsRef.current = highlightedAtoms
-
-  useEffect(() => {
-    if (!containerRef.current || atoms.length === 0) return
-
-    const chartColors = getChartColors()
-
-    const nodeColors: Record<string, string> = {
-      bounty: chartColors.nodeBounty,
-      finding: chartColors.nodeFinding,
-      hypothesis: chartColors.nodeHypothesis,
-      negative_result: chartColors.nodeNegativeResult,
-      synthesis: chartColors.nodeSynthesis,
+  const nodeColor = useCallback((node: object) => {
+    const n = node as GraphNode
+    if (highlightedAtoms?.has(n.atom.atom_id)) return '#facc15'
+    const c = getChartColors()
+    const map: Record<string, string> = {
+      bounty: c.nodeBounty,
+      finding: c.nodeFinding,
+      hypothesis: c.nodeHypothesis,
+      negative_result: c.nodeNegativeResult,
+      synthesis: c.nodeSynthesis,
     }
-    const edgeColors: Record<string, string> = {
-      derived_from: chartColors.edgeDerived,
-      contradicts: chartColors.edgeContradicts,
-      replicates: chartColors.edgeReplicates,
-    }
-    const fallbackNode = chartColors.textMuted
-    const fallbackEdge = theme === 'dark' ? '#6b7280' : '#9ca3af'
-
-    // Compute UMAP positions (sync — takes ~0.5–2s for typical graph sizes)
-    const positions = computePositions(atoms, embeddings)
-
-    const graph = new Graph({ multi: true })
-
-    atoms.forEach(atom => {
-      const pos = positions[atom.atom_id] ?? { x: 0, y: 0 }
-      const isHighlighted = highlightedAtomsRef.current?.has(atom.atom_id) ?? false
-      graph.addNode(atom.atom_id, {
-        label: atom.atom_type,
-        size: Math.max(8, Math.min(25, 8 + (atom.ph_attraction ?? 0) * 17)) + (isHighlighted ? 4 : 0),
-        color: isHighlighted ? '#facc15' : (nodeColors[atom.atom_type] ?? fallbackNode),
-        atom,
-        x: pos.x,
-        y: pos.y,
-      })
-    })
-
-    edges.forEach(edge => {
-      if (graph.hasNode(edge.source_id) && graph.hasNode(edge.target_id)) {
-        graph.addEdge(edge.source_id, edge.target_id, {
-          color: edgeColors[edge.edge_type] ?? fallbackEdge,
-          size: 2,
-        })
-      }
-    })
-
-    // Light ForceAtlas2 refinement — respects edges while keeping UMAP clusters intact
-    const hasEmbeddings = Object.keys(embeddings).length > 0
-    forceAtlas2.assign(graph, {
-      iterations: hasEmbeddings ? 50 : 150,
-      settings: {
-        gravity: hasEmbeddings ? 0.5 : 1.5,
-        linLogMode: true,
-        strongGravityMode: false,
-        barnesHutOptimize: false,
-        scalingRatio: hasEmbeddings ? 0.8 : 1.2,
-        adjustSizes: true,
-      },
-    })
-
-    const sigma = new Sigma(graph, containerRef.current, {
-      renderLabels: false,
-      defaultNodeColor: fallbackNode,
-      defaultEdgeColor: fallbackEdge,
-      minCameraRatio: 0.05,
-      maxCameraRatio: 10,
-    })
-
-    sigma.on('enterNode', ({ node }) => {
-      hoverNodeRef.current = node
-      const attrs = graph.getNodeAttributes(node)
-      graph.setNodeAttribute(node, 'size', (attrs.size as number) * 1.5)
-    })
-
-    sigma.on('leaveNode', ({ node }) => {
-      hoverNodeRef.current = null
-      const attrs = graph.getNodeAttributes(node)
-      graph.setNodeAttribute(node, 'size', (attrs.size as number) / 1.5)
-    })
-
-    sigma.on('clickNode', ({ node }) => {
-      const atom = graph.getNodeAttributes(node).atom as Atom
-      onNodeClick(atom)
-    })
-
-    sigmaRef.current = sigma
-
-    return () => {
-      sigmaRef.current?.kill()
-      sigmaRef.current = null
-    }
-  }, [atoms, edges, embeddings, onNodeClick, theme])
-
-  // Second effect: update highlight state without rebuilding Sigma.
-  // Kept separate so UMAP+ForceAtlas2 is not re-run each time a highlight expires.
-  useEffect(() => {
-    if (!sigmaRef.current) return
-    const graph = sigmaRef.current.getGraph()
-    const chartColors = getChartColors()
-    const nodeColors: Record<string, string> = {
-      bounty: chartColors.nodeBounty,
-      finding: chartColors.nodeFinding,
-      hypothesis: chartColors.nodeHypothesis,
-      negative_result: chartColors.nodeNegativeResult,
-      synthesis: chartColors.nodeSynthesis,
-    }
-    const fallbackNode = chartColors.textMuted
-
-    graph.forEachNode(nodeId => {
-      const atom = graph.getNodeAttributes(nodeId).atom as Atom
-      const isHighlighted = highlightedAtoms?.has(atom.atom_id) ?? false
-      const baseSize = Math.max(8, Math.min(25, 8 + (atom.ph_attraction ?? 0) * 17))
-      graph.setNodeAttribute(nodeId, 'size', baseSize + (isHighlighted ? 4 : 0))
-      graph.setNodeAttribute(nodeId, 'color',
-        isHighlighted ? '#facc15' : (nodeColors[atom.atom_type] ?? fallbackNode))
-    })
-    sigmaRef.current.refresh()
+    return map[n.atom.atom_type] ?? c.textMuted
   }, [highlightedAtoms])
 
-  const camera = () => sigmaRef.current?.getCamera()
+  const nodeVal = useCallback((node: object) => {
+    const n = node as GraphNode
+    return Math.max(5, Math.min(25, (n.atom.ph_attraction ?? 0) * 10 + 5))
+  }, [])
+
+  const nodeLabel = useCallback((node: object) => {
+    const n = node as GraphNode
+    return n.atom.statement.slice(0, 80)
+  }, [])
+
+  const linkColor = useCallback((link: object) => {
+    const l = link as GraphLink
+    const c = getChartColors()
+    const map: Record<string, string> = {
+      derived_from: c.edgeDerived,
+      replicates: c.edgeReplicates,
+      contradicts: c.edgeContradicts,
+    }
+    return map[l.edge_type] ?? '#ffffff22'
+  }, [])
+
+  const linkWidth = useCallback((link: object) => {
+    const l = link as GraphLink
+    return (l.edge_type === 'replicates' || l.edge_type === 'contradicts') ? 2 : 1
+  }, [])
+
+  const handleNodeClick = useCallback((node: object) => {
+    const n = node as GraphNode
+    onNodeClick(n.atom)
+  }, [onNodeClick])
 
   return (
-    <div className="relative w-full h-full">
-      <div ref={containerRef} className="w-full h-full" />
-
-      {/* Zoom controls */}
-      <div className="absolute top-4 right-4 flex flex-col gap-2">
-        {[
-          { title: 'Zoom in',  onClick: () => camera()?.animatedZoom({ duration: 300 }),   path: 'M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z' },
-          { title: 'Zoom out', onClick: () => camera()?.animatedUnzoom({ duration: 300 }), path: 'M19 13H5v-2h14v2z' },
-          { title: 'Reset',    onClick: () => camera()?.animatedReset({ duration: 300 }),   path: 'M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z' },
-        ].map(btn => (
-          <button
-            key={btn.title}
-            onClick={btn.onClick}
-            title={btn.title}
-            className="bg-[var(--bg)] border border-[var(--border)] rounded p-2 text-[var(--text-primary)] hover:bg-[var(--bg-subtle)] transition-colors"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-              <path d={btn.path} />
-            </svg>
-          </button>
-        ))}
-      </div>
+    <div ref={containerRef} className="w-full h-full">
+      <ForceGraph3D
+        graphData={graphData}
+        width={dimensions.width}
+        height={dimensions.height}
+        backgroundColor="#0a0a0a"
+        nodeColor={nodeColor}
+        nodeVal={nodeVal}
+        nodeLabel={nodeLabel}
+        linkColor={linkColor}
+        linkWidth={linkWidth}
+        linkOpacity={0.5}
+        onNodeClick={handleNodeClick}
+        nodeAutoColorBy={undefined}
+      />
     </div>
   )
 }
