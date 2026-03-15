@@ -58,14 +58,24 @@ export default function GraphLegend({ className = '' }: GraphLegendProps) {
             <div className="space-y-1">
               {edgeTypes.map(({ type, color, label }) => (
                 <div key={type} className="flex items-center gap-2">
-                  <div 
-                    className="w-8 h-0.5" 
+                  <div
+                    className="w-8 h-0.5"
                     style={{ backgroundColor: color }}
                   />
                   <span className="text-xs text-[var(--text-muted)]">{label}</span>
                 </div>
               ))}
             </div>
+          </div>
+
+          <div>
+            <h4 className="text-sm font-medium text-[var(--text-primary)] mb-2">Age</h4>
+            <div className="flex items-center gap-2">
+              <div className="w-20 h-2 rounded-full" style={{
+                background: 'linear-gradient(to right, var(--bg-subtle), var(--node-finding))'
+              }} />
+            </div>
+            <p className="text-xs text-[var(--text-muted)] mt-1">Faded = older · Vivid = newer</p>
           </div>
         </div>
       )}

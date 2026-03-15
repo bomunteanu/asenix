@@ -756,54 +756,90 @@ fn cmd_agent_run(hub: &str, project_slug: &str, n: usize) -> Result<()> {
 
         if n == 1 {
             display::progress(&format!(
-                "Launching agent {} in foreground (Ctrl+C to stop)...",
+                "Launching agent {} (Ctrl+C to stop)...",
                 agent_n
             ));
             display::hint(&format!("Log: {}", log_path.display()));
 
+            let atoms_before = get_project_atom_count(&api_client, &project.project_id);
+
             let log_file = std::fs::File::create(&log_path)?;
 
-            let mut child = std::process::Command::new("claude")
-                .args([
-                    "--dangerously-skip-permissions",
-                    "--mcp-config",
-                    mcp_config_path.to_str().unwrap_or(""),
-                    "-p",
-                    &prompt,
-                ])
-                .current_dir(&workdir)
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .spawn()
-                .map_err(|e| {
-                    anyhow::anyhow!(
-                        "failed to launch claude: {}\n  hint: npm install -g @anthropic-ai/claude-code",
-                        e
-                    )
-                })?;
+            let mut cmd = std::process::Command::new("claude");
+            cmd.args([
+                "--dangerously-skip-permissions",
+                "--output-format",
+                "stream-json",
+                "--mcp-config",
+                mcp_config_path.to_str().unwrap_or(""),
+                "-p",
+                &prompt,
+            ])
+            .current_dir(&workdir)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
 
+            // Spawn in its own process group so Ctrl+C kills claude AND all
+            // subprocesses it starts (e.g. python train.py).
+            #[cfg(unix)]
+            {
+                use std::os::unix::process::CommandExt;
+                cmd.process_group(0);
+            }
+
+            let mut child = cmd.spawn().map_err(|e| {
+                anyhow::anyhow!(
+                    "failed to launch claude: {}\n  hint: npm install -g @anthropic-ai/claude-code",
+                    e
+                )
+            })?;
+
+            let child_pid = child.id();
             let stdout = child.stdout.take().unwrap();
             let stderr = child.stderr.take().unwrap();
 
             let log_arc = std::sync::Arc::new(std::sync::Mutex::new(log_file));
             let log_arc2 = log_arc.clone();
 
+            // Track whether the agent ever called publish_atoms.
+            let saw_publish = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let saw_publish_clone = saw_publish.clone();
+
+            // Kill the child's entire process group on Ctrl+C.
+            let _ = ctrlc::set_handler(move || {
+                #[cfg(unix)]
+                unsafe {
+                    libc::kill(-(child_pid as libc::pid_t), libc::SIGTERM);
+                }
+                std::process::exit(130);
+            });
+
             let t_out = std::thread::spawn(move || {
                 let reader = BufReader::new(stdout);
                 for line in reader.lines().flatten() {
-                    println!("{}", line);
+                    // Write raw JSON to log.
                     if let Ok(mut f) = log_arc.lock() {
                         let _ = std::io::Write::write_fmt(&mut *f, format_args!("{}\n", line));
                     }
+                    // Track publish_atoms calls.
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
+                        if v["type"].as_str() == Some("tool_use")
+                            && v["name"].as_str().map_or(false, |n| n.contains("publish_atoms"))
+                        {
+                            saw_publish_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+                        }
+                    }
+                    // Pretty-print the event.
+                    print_stream_event(&line);
                 }
             });
             let t_err = std::thread::spawn(move || {
                 let reader = BufReader::new(stderr);
                 for line in reader.lines().flatten() {
-                    eprintln!("{}", line);
                     if let Ok(mut f) = log_arc2.lock() {
                         let _ = std::io::Write::write_fmt(&mut *f, format_args!("{}\n", line));
                     }
+                    eprintln!("{}", line);
                 }
             });
 
@@ -811,12 +847,28 @@ fn cmd_agent_run(hub: &str, project_slug: &str, n: usize) -> Result<()> {
             let _ = t_out.join();
             let _ = t_err.join();
 
+            // Post-run summary.
+            println!();
+            let atoms_after = get_project_atom_count(&api_client, &project.project_id);
+            let new_atoms = atoms_after.saturating_sub(atoms_before);
+            if new_atoms > 0 {
+                display::success(&format!("{} new atom(s) published to hub", new_atoms));
+            } else if saw_publish.load(std::sync::atomic::Ordering::Relaxed) {
+                // publish_atoms was called but atoms may still be embedding.
+                display::success("publish_atoms called — atoms may still be indexing");
+            } else {
+                println!(
+                    "  {} No atoms published — check the log for details",
+                    "⚠".yellow()
+                );
+                display::hint(&format!("Log: {}", log_path.display()));
+            }
+
             if !status.success() {
                 display::error(&format!(
                     "Agent exited with code {}",
                     status.code().unwrap_or(-1)
                 ));
-                display::hint(&format!("Check log: {}", log_path.display()));
                 std::process::exit(status.code().unwrap_or(1));
             }
         } else {
@@ -914,13 +966,48 @@ fn register_one_agent(
 fn get_project_atom_count(api_client: &client::AsenixClient, project_id: &str) -> usize {
     match api_client.mcp_call(
         "search_atoms",
-        serde_json::json!({ "project_id": project_id, "limit": 1 }),
+        serde_json::json!({ "project_id": project_id, "limit": 10000 }),
     ) {
         Ok(result) => result["atoms"]
             .as_array()
             .map(|a| a.len())
             .unwrap_or(0),
         Err(_) => 0,
+    }
+}
+
+/// Parse a single stream-json event line from `claude --output-format stream-json`
+/// and print a human-readable representation.
+fn print_stream_event(line: &str) {
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+        return;
+    };
+    match v["type"].as_str() {
+        Some("assistant") => {
+            if let Some(arr) = v["message"]["content"].as_array() {
+                for item in arr {
+                    if item["type"].as_str() == Some("text") {
+                        if let Some(t) = item["text"].as_str() {
+                            print!("{}", t);
+                            if !t.ends_with('\n') {
+                                println!();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Some("tool_use") => {
+            let name = v["name"].as_str().unwrap_or("?");
+            let short = name.strip_prefix("mcp__asenix__").unwrap_or(name);
+            println!("  {} {}", "→".cyan(), short);
+        }
+        Some("result") => {
+            if let Some(cost) = v["total_cost_usd"].as_f64() {
+                println!("  {} cost: ${:.4}", "ℹ".dimmed(), cost);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -1849,71 +1936,117 @@ fn cmd_login(hub: &str) -> Result<()> {
 fn cmd_logs(n: Option<usize>) -> Result<()> {
     use std::io::{BufRead, BufReader};
 
-    if let Some(n) = n {
-        let path = config::log_path(n);
-        if !path.exists() {
-            display::error(&format!("Log file not found: {}", path.display()));
-            display::hint("Run `asenix agent list` to see registered agents");
+    let logs_dir = config::logs_dir();
+    if !logs_dir.exists() {
+        display::error("No log directory found");
+        display::hint("Run `asenix agent run` to create agents");
+        std::process::exit(1);
+    }
+
+    // Collect all *.log files sorted by modification time (newest first).
+    let mut all_logs: Vec<std::path::PathBuf> = std::fs::read_dir(&logs_dir)?
+        .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .ends_with(".log")
+        })
+        .map(|e| e.path())
+        .collect();
+
+    all_logs.sort_by(|a, b| {
+        let mt_a = a.metadata().and_then(|m| m.modified()).ok();
+        let mt_b = b.metadata().and_then(|m| m.modified()).ok();
+        mt_b.cmp(&mt_a) // newest first
+    });
+
+    if all_logs.is_empty() {
+        display::error("No log files found");
+        display::hint(&format!("Logs dir: {}", logs_dir.display()));
+        std::process::exit(1);
+    }
+
+    // If an agent number was given, filter to logs matching `_agent_<n>_`.
+    let target_logs: Vec<std::path::PathBuf> = if let Some(n) = n {
+        let pattern = format!("_agent_{}_", n);
+        let filtered: Vec<_> = all_logs
+            .into_iter()
+            .filter(|p| {
+                p.file_name()
+                    .map(|f| f.to_string_lossy().contains(&pattern))
+                    .unwrap_or(false)
+            })
+            .collect();
+        if filtered.is_empty() {
+            display::error(&format!("No log files found for agent {}", n));
+            display::hint(&format!("Logs dir: {}", logs_dir.display()));
             std::process::exit(1);
         }
+        filtered
+    } else {
+        all_logs
+    };
+
+    if target_logs.len() == 1 {
+        // Single log: tail it.
+        let path = &target_logs[0];
         display::progress(&format!("Tailing {} (Ctrl+C to stop)", path.display()));
-        let file = std::fs::File::open(&path)?;
+        let file = std::fs::File::open(path)?;
         let mut reader = BufReader::new(file);
         loop {
             let mut line = String::new();
             match reader.read_line(&mut line) {
                 Ok(0) => std::thread::sleep(std::time::Duration::from_millis(100)),
-                Ok(_) => print!("{}", line),
+                Ok(_) => {
+                    // Log lines are raw stream-json; pretty-print them.
+                    let trimmed = line.trim_end();
+                    if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                        // Reuse same display logic as live streaming.
+                        print_stream_event(trimmed);
+                        let _ = v; // already handled
+                    } else {
+                        print!("{}", line);
+                    }
+                }
                 Err(e) => return Err(e.into()),
             }
         }
     } else {
-        // Multiplex all log files
-        let logs_dir = config::logs_dir();
-        if !logs_dir.exists() {
-            display::error("No log directory found");
-            display::hint("Run `asenix agent run` to create agents");
-            std::process::exit(1);
-        }
-
-        let mut log_files: Vec<(usize, std::path::PathBuf)> = std::fs::read_dir(&logs_dir)?
-            .filter_map(|e| e.ok())
-            .filter_map(|e| {
-                let name = e.file_name();
-                let s = name.to_string_lossy().into_owned();
-                if s.starts_with("agent_") && s.ends_with(".log") {
-                    let n: usize = s
-                        .strip_prefix("agent_")?
-                        .strip_suffix(".log")?
-                        .parse()
-                        .ok()?;
-                    Some((n, e.path()))
-                } else {
-                    None
-                }
+        // Multiple logs: show a table then multiplex the most recent N.
+        println!("  {} logs in {}", target_logs.len(), logs_dir.display());
+        println!();
+        let rows: Vec<Vec<String>> = target_logs
+            .iter()
+            .enumerate()
+            .map(|(i, p)| {
+                vec![
+                    (i + 1).to_string(),
+                    p.file_name()
+                        .map(|f| f.to_string_lossy().into_owned())
+                        .unwrap_or_default(),
+                ]
             })
             .collect();
-
-        if log_files.is_empty() {
-            display::error("No agent log files found");
-            display::hint("Run `asenix agent run` to create agents");
-            std::process::exit(1);
-        }
-
-        log_files.sort_by_key(|(n, _)| *n);
+        display::print_table(&["#", "File"], &rows);
+        println!();
         display::progress(&format!(
-            "Multiplexing {} agent log(s) (Ctrl+C to stop)",
-            log_files.len()
+            "Multiplexing {} log(s) (Ctrl+C to stop)",
+            target_logs.len()
         ));
 
-        let handles: Vec<_> = log_files
+        let handles: Vec<_> = target_logs
             .into_iter()
-            .map(|(n, path)| {
+            .enumerate()
+            .map(|(i, path)| {
+                let prefix = path
+                    .file_name()
+                    .map(|f| f.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| format!("agent_{}", i + 1));
                 std::thread::spawn(move || {
                     let file = match std::fs::File::open(&path) {
                         Ok(f) => f,
                         Err(e) => {
-                            eprintln!("[agent_{}] error opening log: {}", n, e);
+                            eprintln!("[{}] error opening log: {}", prefix, e);
                             return;
                         }
                     };
@@ -1921,8 +2054,10 @@ fn cmd_logs(n: Option<usize>) -> Result<()> {
                     loop {
                         let mut line = String::new();
                         match reader.read_line(&mut line) {
-                            Ok(0) => std::thread::sleep(std::time::Duration::from_millis(100)),
-                            Ok(_) => print!("[agent_{}] {}", n, line),
+                            Ok(0) => {
+                                std::thread::sleep(std::time::Duration::from_millis(100))
+                            }
+                            Ok(_) => print!("[{}] {}", prefix, line),
                             Err(_) => break,
                         }
                     }

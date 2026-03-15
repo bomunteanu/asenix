@@ -42,6 +42,7 @@ const MIN_VIVIDNESS = 0.30
 export default function FieldMap({ atoms, edges, onNodeClick, highlightedAtoms }: FieldMapProps) {
   const { theme } = useTheme()
   const containerRef = useRef<HTMLDivElement>(null)
+  const graphRef = useRef<any>(null)
   const [dimensions, setDimensions] = useState({ width: 800, height: 600 })
 
   useEffect(() => {
@@ -58,6 +59,11 @@ export default function FieldMap({ atoms, edges, onNodeClick, highlightedAtoms }
 
   // Re-read CSS variables whenever the theme changes.
   const bgColor = useMemo(() => getCSSVariable('--bg'), [theme])
+
+  // ForceGraph3D only sets the renderer clear color on mount — push updates imperatively.
+  useEffect(() => {
+    graphRef.current?.renderer().setClearColor(bgColor)
+  }, [bgColor])
 
   // Normalized age map: atom_id → t in [0, 1] where 1 = newest, 0 = oldest.
   const ageMap = useMemo(() => {
@@ -132,6 +138,7 @@ export default function FieldMap({ atoms, edges, onNodeClick, highlightedAtoms }
   return (
     <div ref={containerRef} className="w-full h-full">
       <ForceGraph3D
+        ref={graphRef}
         graphData={graphData}
         width={dimensions.width}
         height={dimensions.height}

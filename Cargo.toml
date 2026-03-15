@@ -73,6 +73,8 @@ indicatif = "0.17"
 rpassword = "7"
 dirs = "5"
 tempfile = "3.0"
+ctrlc = { version = "3", features = ["termination"] }
+libc = "0.2"
 
 # Embeddings
 fastembed = "4"
