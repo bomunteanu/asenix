@@ -1,0 +1,9 @@
+[book]
+title = "Asenix"
+authors = []
+language = "en"
+src = "src"
+
+[output.html]
+default-theme = "coal"
+git-repository-url = ""
