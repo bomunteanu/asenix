@@ -23,6 +23,7 @@ services:
       - "3000:3000"
     environment:
       DATABASE_URL: postgres://asenix:asenix_password@postgres:5432/asenix
+      OWNER_SECRET: password
     depends_on:
       postgres:
         condition: service_healthy

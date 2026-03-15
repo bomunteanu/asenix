@@ -54,7 +54,7 @@ pub struct SessionStore {
 
 impl SessionStore {
     pub fn new() -> Self {
-        Self::with_ttl_seconds(3600)
+        Self::with_ttl_seconds(1800) // 30-minute idle TTL
     }
 
     pub fn with_ttl_seconds(session_ttl_seconds: u64) -> Self {

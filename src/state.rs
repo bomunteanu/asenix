@@ -3,6 +3,7 @@ use crate::db::graph_cache::GraphCache;
 use crate::api::handlers::Metrics;
 use sqlx::PgPool;
 use std::collections::HashMap;
+use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
 use tokio::sync::{broadcast, mpsc};
 use tokio::time::Instant;
@@ -58,6 +59,52 @@ impl RateLimiter {
     }
 }
 
+/// Per-IP rate limiter.  Used for two independent limits:
+///   - general unauthenticated requests (60/min)
+///   - self-registration (5/hour)
+#[derive(Clone)]
+pub struct IpRateLimiter {
+    // ip -> (count, window_start)
+    inner: Arc<Mutex<HashMap<IpAddr, (usize, Instant)>>>,
+}
+
+impl Default for IpRateLimiter {
+    fn default() -> Self { Self::new() }
+}
+
+impl IpRateLimiter {
+    pub fn new() -> Self {
+        Self { inner: Arc::new(Mutex::new(HashMap::new())) }
+    }
+
+    /// Returns `true` if the request is allowed, `false` if the limit is exceeded.
+    /// `window_secs` is the width of the sliding window; `max` is the cap.
+    pub fn check(&self, ip: IpAddr, max: usize, window_secs: u64) -> bool {
+        if max == 0 { return false; }
+        let mut map = self.inner.lock().unwrap();
+        let now = Instant::now();
+        let window = std::time::Duration::from_secs(window_secs);
+        match map.get_mut(&ip) {
+            Some((count, start)) => {
+                if now.duration_since(*start) >= window {
+                    *count = 1;
+                    *start = now;
+                    true
+                } else if *count >= max {
+                    false
+                } else {
+                    *count += 1;
+                    true
+                }
+            }
+            None => {
+                map.insert(ip, (1, now));
+                true
+            }
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct AppState {
     pub pool: PgPool,
@@ -66,6 +113,8 @@ pub struct AppState {
     pub embedding_queue_tx: mpsc::Sender<String>, // atom_id
     pub sse_broadcast_tx: broadcast::Sender<SseEvent>,
     pub rate_limiter: RateLimiter,
+    pub ip_rate_limiter: IpRateLimiter,     // 60 req/min per IP (unauthenticated)
+    pub reg_rate_limiter: IpRateLimiter,    // 5 registrations/hour per IP
     pub config: Arc<Config>,
     pub metrics: Arc<Metrics>,
     pub storage: Arc<crate::storage::LocalStorage>,
@@ -107,6 +156,8 @@ impl AppState {
             embedding_queue_tx,
             sse_broadcast_tx,
             rate_limiter: RateLimiter::new(),
+            ip_rate_limiter: IpRateLimiter::new(),
+            reg_rate_limiter: IpRateLimiter::new(),
             config,
             metrics: Arc::new(Metrics::default()),
             storage,

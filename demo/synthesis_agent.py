@@ -72,6 +72,8 @@ class AsenixClient:
     def query_cluster(self, vector: list[float], radius: float = 0.3,
                       limit: int = 20) -> list[dict]:
         result = self._rpc('query_cluster', {
+            'agent_id': self.agent_id,
+            'api_token': self.api_token,
             'vector': vector,
             'radius': radius,
             'limit': limit,

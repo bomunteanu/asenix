@@ -1,12 +1,13 @@
 use crate::state::AppState;
 use axum::{
-    extract::{Path, Query, State},
+    extract::{ConnectInfo, Path, Query, State},
     http::StatusCode,
     response::Json,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sqlx::Row;
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -123,9 +124,15 @@ impl Metrics {
         output.push_str("# TYPE mote_graph_cache_edges gauge\n");
         output.push_str(&format!("mote_graph_cache_edges {}\n", cache.graph.edge_count()));
         
+        let embedding_queue_depth: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM atoms WHERE embedding_status = 'pending' AND NOT archived"
+        )
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(0);
         output.push_str("# HELP mote_embedding_queue_depth Current embedding queue depth\n");
         output.push_str("# TYPE mote_embedding_queue_depth gauge\n");
-        output.push_str(&format!("mote_embedding_queue_depth {}\n", 0)); // TODO: Implement queue depth tracking
+        output.push_str(&format!("mote_embedding_queue_depth {}\n", embedding_queue_depth));
         
         Ok(output)
     }
@@ -149,13 +156,21 @@ pub async fn health_check(State(state): State<Arc<AppState>>) -> Json<HealthResp
     let cache = state.graph_cache.read().await;
     let graph_nodes = cache.graph.node_count();
     let graph_edges = cache.graph.edge_count();
-    
+    drop(cache);
+
+    let embedding_queue_depth: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM atoms WHERE embedding_status = 'pending' AND NOT archived"
+    )
+    .fetch_one(&state.pool)
+    .await
+    .unwrap_or(0);
+
     Json(HealthResponse {
         status: "healthy".to_string(),
         database: "connected".to_string(),
         graph_nodes,
         graph_edges,
-        embedding_queue_depth: 0, // TODO: Implement queue depth tracking
+        embedding_queue_depth: embedding_queue_depth as usize,
     })
 }
 
@@ -253,6 +268,68 @@ pub async fn review_atom(
     });
 
     Ok(Json(response))
+}
+
+// ── POST /register ────────────────────────────────────────────────────────────
+
+#[derive(Deserialize, Default)]
+pub struct RegisterBody {
+    pub agent_name: Option<String>,
+}
+
+/// Unauthenticated self-registration. Rate-limited to 5 per IP per hour.
+pub async fn register_agent(
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    State(state): State<Arc<AppState>>,
+    body: Option<Json<RegisterBody>>,
+) -> std::result::Result<Json<Value>, (StatusCode, Json<Value>)> {
+    // 5 registrations per IP per hour
+    if !state.reg_rate_limiter.check(addr.ip(), 5, 3600) {
+        return Err((
+            StatusCode::TOO_MANY_REQUESTS,
+            Json(json!({"error": "Registration rate limit exceeded (5/hour per IP). Retry later."})),
+        ));
+    }
+
+    let _agent_name = body
+        .as_ref()
+        .and_then(|b| b.agent_name.clone())
+        .unwrap_or_else(|| "unnamed-agent".to_string());
+
+    let response = crate::db::queries::register_agent_simple(&state.pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+
+    Ok(Json(json!({
+        "agent_id":   response.agent_id,
+        "api_token":  response.api_token,
+        "message": "Agent registered. Save agent_id and api_token — pass both on every request."
+    })))
+}
+
+// ── POST /admin/login ─────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct AdminLoginBody {
+    pub secret: String,
+}
+
+/// Exchange OWNER_SECRET for a short-lived owner JWT (24 h).
+pub async fn admin_login(
+    Json(body): Json<AdminLoginBody>,
+) -> std::result::Result<Json<Value>, (StatusCode, Json<Value>)> {
+    let owner_secret = std::env::var("OWNER_SECRET").unwrap_or_default();
+    if owner_secret.is_empty() || body.secret != owner_secret {
+        return Err((
+            StatusCode::UNAUTHORIZED,
+            Json(json!({"error": "Invalid secret"})),
+        ));
+    }
+
+    let token = crate::api::auth::issue_owner_jwt(&owner_secret)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))))?;
+
+    Ok(Json(json!({"token": token, "expires_in": 86400})))
 }
 
 /// POST /admin/trigger-bounty-tick

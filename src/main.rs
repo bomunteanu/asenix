@@ -2,9 +2,11 @@
 #![allow(clippy::redundant_pattern_matching, clippy::should_implement_trait)]
 
 use axum::extract::DefaultBodyLimit;
+use axum::middleware;
 use axum::routing::{get, post, put, head};
 use axum::Router;
 use clap::Parser;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -142,24 +144,47 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    // Spawn MCP session cleanup (every 5 minutes)
+    let session_store_sweep = state.session_store.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(300));
+        loop {
+            interval.tick().await;
+            session_store_sweep.cleanup_expired_sessions();
+            tracing::debug!("MCP session sweep complete");
+        }
+    });
+
     // Build router
     let cors = CorsLayer::new()
         .allow_origin(Any)
         .allow_methods(Any)
         .allow_headers(Any);
 
-    let app = Router::new()
-        .route("/health", get(api::handlers::health_check))
-        .route("/metrics", get(api::handlers::metrics))
+    let shared_state = std::sync::Arc::new(state.clone());
+
+    // Routes protected by owner JWT
+    let protected_routes = Router::new()
         .route("/review", get(api::handlers::get_review_queue))
         .route("/review/:id", post(api::handlers::review_atom))
         .route("/admin/trigger-bounty-tick", post(api::handlers::trigger_bounty_tick))
+        .layer(middleware::from_fn_with_state(
+            shared_state.clone(),
+            api::auth::owner_jwt_middleware,
+        ));
+
+    let app = Router::new()
+        // Public endpoints (no auth required)
+        .route("/health", get(api::handlers::health_check))
+        .route("/metrics", get(api::handlers::metrics))
+        .route("/register", post(api::handlers::register_agent))
+        .route("/admin/login", post(api::handlers::admin_login))
         .route("/events", get(api::sse::sse_events))
+        // Agent-authenticated endpoints
         .route("/rpc", post(api::rpc::handle_mcp))
         .route("/mcp", post(api::mcp_server::handle_mcp_request)
             .get(api::mcp_server::handle_mcp_get)
             .delete(api::mcp_server::handle_mcp_delete))
-        // rspc endpoint (alongside existing /rpc)
         .route("/api/rspc", post(api::rspc_router::handle_rspc_request))
         // Artifact routes
         .route("/artifacts/:hash", put(api::artifacts::put_artifact))
@@ -168,15 +193,25 @@ async fn main() -> anyhow::Result<()> {
         .route("/artifacts/:hash/meta", get(api::artifacts::get_artifact_metadata))
         .route("/artifacts/:hash/ls", get(api::artifacts::list_artifact_tree))
         .route("/artifacts/:hash/resolve/*path", get(api::artifacts::resolve_artifact_path))
+        // JWT-protected routes
+        .merge(protected_routes)
+        // Global IP rate limiter (skip for authenticated agents)
+        .layer(middleware::from_fn_with_state(
+            shared_state.clone(),
+            api::auth::ip_rate_limit_middleware,
+        ))
         .layer(cors)
         .layer(DefaultBodyLimit::max(10 * 1024 * 1024)) // 10MB limit
-        .with_state(std::sync::Arc::new(state.clone()));
+        .with_state(shared_state);
 
-    // Start server
+    // Start server (with_connect_info enables IP extraction in middleware)
     let listener = tokio::net::TcpListener::bind(&config.hub.listen_address).await?;
     tracing::info!("Asenix server listening on {}", config.hub.listen_address);
 
-    axum::serve(listener, app)
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
         .with_graceful_shutdown(shutdown_signal(
             embedding_queue_tx,
             embedding_handle,

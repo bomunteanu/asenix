@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod handlers;
 pub mod rpc;
 pub mod rpc_handlers;

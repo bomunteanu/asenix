@@ -116,7 +116,7 @@ pub async fn handle_mcp(
         "unban_atom" => handle_unban_atom(&state, request.params).await,
         "get_suggestions" => handle_get_suggestions(&state, request.params).await,
         "get_field_map" => handle_get_field_map(&state, request.params).await,
-        "get_graph_edges" => handle_get_graph_edges(&state).await,
+        "get_graph_edges" => handle_get_graph_edges(&state, request.params).await,
         _ => Err(MoteError::Validation(format!("Method not found: {}", request.method))),
     };
 
@@ -284,6 +284,7 @@ pub async fn handle_search_atoms(
     state: &AppState,
     params: Option<Value>,
 ) -> Result<Value> {
+    authenticate_and_rate_limit(state, &params).await?;
     let params = params.unwrap_or(json!({}));
 
     let domain_filter: Option<String> = serde_json::from_value(params["domain"].clone()).ok();
@@ -312,6 +313,7 @@ pub async fn handle_query_cluster(
     state: &AppState,
     params: Option<Value>,
 ) -> Result<Value> {
+    authenticate_and_rate_limit(state, &params).await?;
     let params = params.ok_or_else(|| MoteError::Validation("Missing params".to_string()))?;
 
     // Extract and validate vector
@@ -874,6 +876,7 @@ pub async fn handle_get_suggestions(
     state: &AppState,
     params: Option<Value>,
 ) -> Result<Value> {
+    authenticate_and_rate_limit(state, &params).await?;
     let params = params.ok_or_else(|| MoteError::Validation("Missing params".to_string()))?;
     
     // Extract optional filters
@@ -1099,7 +1102,12 @@ pub async fn get_exploration_suggestions(
     Ok(exploration_suggestions)
 }
 
-pub async fn handle_get_graph_edges(state: &AppState) -> Result<Value> {
+pub async fn handle_get_graph_edges(state: &AppState, params: Option<Value>) -> Result<Value> {
+    // Only authenticate when called from the public RPC endpoint (params present).
+    // Internal callers (rspc_router) pass None to bypass.
+    if params.is_some() {
+        authenticate_and_rate_limit(state, &params).await?;
+    }
     let rows = sqlx::query(
         "SELECT e.source_id, e.target_id, e.type, e.repl_type, e.created_at
          FROM edges e
@@ -1129,6 +1137,7 @@ pub async fn handle_get_field_map(
     state: &AppState,
     params: Option<Value>,
 ) -> Result<Value> {
+    authenticate_and_rate_limit(state, &params).await?;
     let domain_filter = params
         .as_ref()
         .and_then(|p| p.get("domain"))

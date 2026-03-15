@@ -200,7 +200,7 @@ pub async fn handle_rspc_request(
 
             let atoms: Vec<Atom> = atoms.into_iter().map(domain_atom_to_rspc).collect();
 
-            let edges_result = crate::api::rpc_handlers::rpc_backup::handle_get_graph_edges(&state).await
+            let edges_result = crate::api::rpc_handlers::rpc_backup::handle_get_graph_edges(&state, None).await
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
             let edges_data = edges_result.get("edges").and_then(|e| e.as_array())
@@ -237,7 +237,7 @@ pub async fn handle_rspc_request(
             let atom_ids: Vec<String> = atoms.iter().map(|a| a.atom_id.clone()).collect();
             let atoms: Vec<Atom> = atoms.into_iter().map(domain_atom_to_rspc).collect();
 
-            let edges_result = crate::api::rpc_handlers::rpc_backup::handle_get_graph_edges(&state).await
+            let edges_result = crate::api::rpc_handlers::rpc_backup::handle_get_graph_edges(&state, None).await
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
             let edges_data = edges_result.get("edges").and_then(|e| e.as_array())
                 .ok_or_else(|| StatusCode::INTERNAL_SERVER_ERROR)?;

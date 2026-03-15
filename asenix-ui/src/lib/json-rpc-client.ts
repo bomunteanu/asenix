@@ -1,3 +1,13 @@
+function adminAuthHeader(): Record<string, string> {
+  try {
+    const stored = localStorage.getItem('asenix-admin-auth')
+    const token = stored ? JSON.parse(stored)?.state?.token : null
+    return token ? { Authorization: `Bearer ${token}` } : {}
+  } catch {
+    return {}
+  }
+}
+
 import type {
   HealthResponse,
   SearchAtomsInput,
@@ -126,7 +136,7 @@ class JsonRpcClient {
     if (params?.limit !== undefined) qs.set('limit', String(params.limit))
     if (params?.offset !== undefined) qs.set('offset', String(params.offset))
     const response = await fetch(`${this.baseUrl}/review?${qs}`, {
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...adminAuthHeader() },
     })
     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
     return response.json()
@@ -135,7 +145,7 @@ class JsonRpcClient {
   async reviewAtom(atomId: string, action: 'approve' | 'reject', reason?: string): Promise<any> {
     const response = await fetch(`${this.baseUrl}/review/${atomId}`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...adminAuthHeader() },
       body: JSON.stringify({ action, reason }),
     })
     if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
