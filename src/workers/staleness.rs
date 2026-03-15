@@ -1,3 +1,4 @@
+use pgvector::Vector;
 use sqlx::{PgPool, Row};
 use tokio::sync::broadcast;
 use tracing::{info, error, debug};
@@ -43,7 +44,7 @@ impl StalenessWorker {
 
         for synthesis_row in synthesis_atoms {
             let atom_id: String = synthesis_row.get("atom_id");
-            let embedding: Option<Vec<f64>> = synthesis_row.get("embedding");
+            let embedding: Option<Vector> = synthesis_row.get("embedding");
             let created_at: chrono::DateTime<chrono::Utc> = synthesis_row.get("created_at");
             let domain: String = synthesis_row.get("domain");
 
@@ -58,7 +59,7 @@ impl StalenessWorker {
                  AND embedding <=> $2 < $3"
             )
             .bind(created_at)
-            .bind(&embedding)
+            .bind(embedding.as_ref())
             .bind(self.neighbourhood_radius)
             .fetch_one(&self.pool)
             .await?;
@@ -70,8 +71,8 @@ impl StalenessWorker {
                 );
                 
                 // Emit synthesis_needed event
-                if let Some(embedding) = embedding {
-                    self.emit_synthesis_needed_event(&embedding, newer_atoms_count as usize, &domain);
+                if let Some(ref emb) = embedding {
+                    self.emit_synthesis_needed_event(emb.as_slice(), newer_atoms_count as usize, &domain);
                 }
                 stale_count += 1;
             }
@@ -112,7 +113,7 @@ impl StalenessWorker {
     }
 
     /// Emit synthesis_needed event to the SSE broadcast channel.
-    fn emit_synthesis_needed_event(&self, cluster_center: &[f64], atom_count: usize, domain: &str) {
+    fn emit_synthesis_needed_event(&self, cluster_center: &[f32], atom_count: usize, domain: &str) {
         let event = SseEvent {
             event_type: "synthesis_needed".to_string(),
             data: serde_json::json!({

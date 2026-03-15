@@ -9,3 +9,11 @@ pub struct Project {
     pub description: Option<String>,
     pub created_at: DateTime<Utc>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectFile {
+    pub filename: String,
+    pub size_bytes: i32,
+    pub content_type: Option<String>,
+    pub uploaded_at: DateTime<Utc>,
+}

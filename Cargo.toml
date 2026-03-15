@@ -3,6 +3,14 @@ name = "asenix"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "asenix-server"
+path = "src/main.rs"
+
+[[bin]]
+name = "asenix"
+path = "src/bin/asenix/main.rs"
+
 [[test]]
 name = "unit"
 path = "tests/unit/mod.rs"
@@ -39,7 +47,7 @@ rand = "0.9"
 # Configuration
 toml = "0.8"
 anyhow = "1.0"
-clap = { version = "4.4", features = ["derive"] }
+clap = { version = "4.4", features = ["derive", "env"] }
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }
@@ -59,7 +67,12 @@ async-trait = "0.1"
 # Logging and tracing
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-reqwest = { version = "0.13.2", features = ["json"] }
+reqwest = { version = "0.13.2", features = ["json", "blocking"] }
+colored = "2"
+indicatif = "0.17"
+rpassword = "7"
+dirs = "5"
+tempfile = "3.0"
 
 # Embeddings
 fastembed = "4"
@@ -70,5 +83,4 @@ jsonwebtoken = "9"
 # Test dependencies
 tower = { version = "0.4", features = ["util"] }
 axum-macros = "0.4"
-tempfile = "3.0"
 serial_test = "3"

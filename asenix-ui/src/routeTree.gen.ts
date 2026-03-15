@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as QueueRouteImport } from './routes/queue'
+import { Route as ProjectsRouteImport } from './routes/projects'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as BountiesRouteImport } from './routes/bounties'
 import { Route as AdminRouteImport } from './routes/admin'
@@ -18,6 +19,11 @@ import { Route as IndexRouteImport } from './routes/index'
 const QueueRoute = QueueRouteImport.update({
   id: '/queue',
   path: '/queue',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ProjectsRoute = ProjectsRouteImport.update({
+  id: '/projects',
+  path: '/projects',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DashboardRoute = DashboardRouteImport.update({
@@ -46,6 +52,7 @@ export interface FileRoutesByFullPath {
   '/admin': typeof AdminRoute
   '/bounties': typeof BountiesRoute
   '/dashboard': typeof DashboardRoute
+  '/projects': typeof ProjectsRoute
   '/queue': typeof QueueRoute
 }
 export interface FileRoutesByTo {
@@ -53,6 +60,7 @@ export interface FileRoutesByTo {
   '/admin': typeof AdminRoute
   '/bounties': typeof BountiesRoute
   '/dashboard': typeof DashboardRoute
+  '/projects': typeof ProjectsRoute
   '/queue': typeof QueueRoute
 }
 export interface FileRoutesById {
@@ -61,14 +69,28 @@ export interface FileRoutesById {
   '/admin': typeof AdminRoute
   '/bounties': typeof BountiesRoute
   '/dashboard': typeof DashboardRoute
+  '/projects': typeof ProjectsRoute
   '/queue': typeof QueueRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/admin' | '/bounties' | '/dashboard' | '/queue'
+  fullPaths:
+    | '/'
+    | '/admin'
+    | '/bounties'
+    | '/dashboard'
+    | '/projects'
+    | '/queue'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/admin' | '/bounties' | '/dashboard' | '/queue'
-  id: '__root__' | '/' | '/admin' | '/bounties' | '/dashboard' | '/queue'
+  to: '/' | '/admin' | '/bounties' | '/dashboard' | '/projects' | '/queue'
+  id:
+    | '__root__'
+    | '/'
+    | '/admin'
+    | '/bounties'
+    | '/dashboard'
+    | '/projects'
+    | '/queue'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -76,6 +98,7 @@ export interface RootRouteChildren {
   AdminRoute: typeof AdminRoute
   BountiesRoute: typeof BountiesRoute
   DashboardRoute: typeof DashboardRoute
+  ProjectsRoute: typeof ProjectsRoute
   QueueRoute: typeof QueueRoute
 }
 
@@ -86,6 +109,13 @@ declare module '@tanstack/react-router' {
       path: '/queue'
       fullPath: '/queue'
       preLoaderRoute: typeof QueueRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/projects': {
+      id: '/projects'
+      path: '/projects'
+      fullPath: '/projects'
+      preLoaderRoute: typeof ProjectsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/dashboard': {
@@ -124,6 +154,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminRoute: AdminRoute,
   BountiesRoute: BountiesRoute,
   DashboardRoute: DashboardRoute,
+  ProjectsRoute: ProjectsRoute,
   QueueRoute: QueueRoute,
 }
 export const routeTree = rootRouteImport

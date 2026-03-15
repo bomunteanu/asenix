@@ -44,6 +44,13 @@ export interface UpdateProjectInput {
   description?: string;
 }
 
+export interface ProjectFile {
+  filename: string;
+  size_bytes: number;
+  content_type?: string;
+  uploaded_at: string;
+}
+
 export interface SearchAtomsResponse {
   atoms: Atom[];
   total: number;

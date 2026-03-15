@@ -19,6 +19,8 @@ __pycache__/
 *~
 .claude/
 
+demo/
+
 # OS
 .DS_Store
 Thumbs.db

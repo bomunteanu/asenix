@@ -1,5 +1,6 @@
 pub mod auth;
 pub mod handlers;
+pub mod projects;
 pub mod rpc;
 pub mod rpc_handlers;
 pub mod rspc_router;

@@ -21,8 +21,10 @@ RUN cargo update
 # Enable SQLX offline mode
 ENV SQLX_OFFLINE=true
 
-# Create dummy main.rs to build dependencies
-RUN mkdir src && echo "fn main() {}" > src/main.rs
+# Create dummy sources to build dependencies
+RUN mkdir -p src/bin/asenix \
+    && echo "fn main() {}" > src/main.rs \
+    && echo "fn main() {}" > src/bin/asenix/main.rs
 RUN cargo build --release && rm -rf src
 
 # Copy source code
@@ -50,7 +52,7 @@ RUN useradd --create-home --shell /bin/bash asenix
 WORKDIR /app
 
 # Copy the binary from builder stage
-COPY --from=builder /app/target/release/asenix /usr/local/bin/asenix
+COPY --from=builder /app/target/release/asenix-server /usr/local/bin/asenix-server
 
 # Copy migrations
 COPY --from=builder /app/migrations ./migrations
@@ -74,4 +76,4 @@ HEALTHCHECK --interval=10s --timeout=5s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:3000/health || exit 1
 
 # Run the application
-CMD ["asenix", "--config", "/app/config/config.toml"]
+CMD ["asenix-server", "--config", "/app/config/config.toml"]

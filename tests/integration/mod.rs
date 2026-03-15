@@ -15,6 +15,7 @@ mod full_workflow_tests;
 mod artifact_unification_tests;
 mod artifact_processing_tests;
 mod exploration_integration_tests;
+mod project_tests;
 
 use axum::Router;
 use axum::http::{Request, Method};

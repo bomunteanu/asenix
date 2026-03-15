@@ -7,7 +7,8 @@ import {
   Inbox,
   Sun,
   Moon,
-  ShieldCheck
+  ShieldCheck,
+  FolderOpen,
 } from 'lucide-react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { jsonRpcClient } from '#/lib/json-rpc-client'
@@ -55,6 +56,7 @@ export default function Layout({ children }: LayoutProps) {
     { to: '/dashboard', label: 'Dashboard', icon: BarChart },
     { to: '/bounties', label: 'Steer', icon: Target },
     { to: '/queue', label: 'Review Queue', icon: Inbox },
+    { to: '/projects', label: 'Projects', icon: FolderOpen },
     { to: '/admin', label: 'Admin', icon: ShieldCheck },
   ]
 

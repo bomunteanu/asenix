@@ -168,6 +168,15 @@ async fn main() -> anyhow::Result<()> {
         .route("/review", get(api::handlers::get_review_queue))
         .route("/review/:id", post(api::handlers::review_atom))
         .route("/admin/trigger-bounty-tick", post(api::handlers::trigger_bounty_tick))
+        // Project write endpoints
+        .route("/projects", post(api::projects::create_project))
+        .route("/projects/:project_id", axum::routing::delete(api::projects::delete_project))
+        .route("/projects/:project_id/protocol", put(api::projects::set_protocol))
+        .route("/projects/:project_id/requirements", put(api::projects::set_requirements))
+        .route("/projects/:project_id/seed-bounty", put(api::projects::set_seed_bounty))
+        .route("/projects/:project_id/files/:filename",
+            put(api::projects::upload_file)
+                .delete(api::projects::delete_file))
         .layer(middleware::from_fn_with_state(
             shared_state.clone(),
             api::auth::owner_jwt_middleware,
@@ -180,6 +189,14 @@ async fn main() -> anyhow::Result<()> {
         .route("/register", post(api::handlers::register_agent))
         .route("/admin/login", post(api::handlers::admin_login))
         .route("/events", get(api::sse::sse_events))
+        // Project read endpoints (public — agents fetch at launch)
+        .route("/projects", get(api::projects::list_projects))
+        .route("/projects/:project_id", get(api::projects::get_project))
+        .route("/projects/:project_id/protocol", get(api::projects::get_protocol))
+        .route("/projects/:project_id/requirements", get(api::projects::get_requirements))
+        .route("/projects/:project_id/seed-bounty", get(api::projects::get_seed_bounty))
+        .route("/projects/:project_id/files", get(api::projects::list_files))
+        .route("/projects/:project_id/files/:filename", get(api::projects::get_file))
         // Agent-authenticated endpoints
         .route("/rpc", post(api::rpc::handle_mcp))
         .route("/mcp", post(api::mcp_server::handle_mcp_request)

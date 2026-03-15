@@ -16,6 +16,7 @@ import type {
   GraphWithEmbeddingsResponse,
   GraphInput,
   Project,
+  ProjectFile,
   ListProjectsResponse,
   CreateProjectInput,
 } from "./bindings";
@@ -91,6 +92,143 @@ class JsonRpcClient {
 
   async deleteProject(project_id: string): Promise<void> {
     return this.rspcRequest("deleteProject", { project_id });
+  }
+
+  // ── Project layer REST endpoints ─────────────────────────────────────────
+
+  async createProjectRest(params: CreateProjectInput): Promise<Project> {
+    const res = await fetch(`${this.baseUrl}/projects`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...adminAuthHeader() },
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+    }
+    return res.json();
+  }
+
+  async deleteProjectRest(project_id: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/projects/${project_id}`, {
+      method: 'DELETE',
+      headers: adminAuthHeader(),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+    }
+  }
+
+  async getProtocol(project_id: string): Promise<string | null> {
+    const res = await fetch(`${this.baseUrl}/projects/${project_id}/protocol`);
+    if (res.status === 204 || res.status === 404) return null;
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+    }
+    return res.text();
+  }
+
+  async setProtocol(project_id: string, protocol: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/projects/${project_id}/protocol`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'text/plain', ...adminAuthHeader() },
+      body: protocol,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+    }
+  }
+
+  async getRequirements(project_id: string): Promise<any[]> {
+    const res = await fetch(`${this.baseUrl}/projects/${project_id}/requirements`);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+    }
+    // Backend returns { project_id, requirements: [...] }
+    const data = await res.json();
+    return data.requirements ?? data;
+  }
+
+  async setRequirements(project_id: string, requirements: any[]): Promise<any[]> {
+    const res = await fetch(`${this.baseUrl}/projects/${project_id}/requirements`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...adminAuthHeader() },
+      // Backend expects { requirements: [...] }
+      body: JSON.stringify({ requirements }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    return data.requirements ?? data;
+  }
+
+  async getSeedBounty(project_id: string): Promise<any | null> {
+    const res = await fetch(`${this.baseUrl}/projects/${project_id}/seed-bounty`);
+    if (res.status === 204 || res.status === 404) return null;
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+    }
+    // Backend returns { project_id, seed_bounty: value }
+    const data = await res.json();
+    return data.seed_bounty ?? data;
+  }
+
+  async setSeedBounty(project_id: string, seedBounty: any): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/projects/${project_id}/seed-bounty`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...adminAuthHeader() },
+      // Backend expects { seed_bounty: value }
+      body: JSON.stringify({ seed_bounty: seedBounty }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+    }
+  }
+
+  async listProjectFiles(project_id: string): Promise<ProjectFile[]> {
+    const res = await fetch(`${this.baseUrl}/projects/${project_id}/files`);
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+    }
+    // Backend returns { project_id, files: [...] }
+    const data = await res.json();
+    return data.files ?? data;
+  }
+
+  async uploadProjectFile(project_id: string, filename: string, data: Blob, contentType?: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/projects/${project_id}/files/${encodeURIComponent(filename)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': contentType ?? data.type ?? 'application/octet-stream', ...adminAuthHeader() },
+      body: data,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+    }
+  }
+
+  async deleteProjectFile(project_id: string, filename: string): Promise<void> {
+    const res = await fetch(`${this.baseUrl}/projects/${project_id}/files/${encodeURIComponent(filename)}`, {
+      method: 'DELETE',
+      headers: adminAuthHeader(),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error((body as { error?: string }).error ?? `HTTP ${res.status}`);
+    }
+  }
+
+  projectFileUrl(project_id: string, filename: string): string {
+    return `${this.baseUrl}/projects/${project_id}/files/${encodeURIComponent(filename)}`;
   }
 
   // ── Mutations ─────────────────────────────────────────────────────────────
