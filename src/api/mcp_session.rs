@@ -13,6 +13,8 @@ pub struct Session {
     pub created_at: Instant,
     pub last_active_at: Instant,
     pub initialized: bool,
+    /// Agent bound to this session at initialize time (None for anonymous sessions).
+    pub agent_id: Option<String>,
 }
 
 /// Client information from initialize request
@@ -71,6 +73,7 @@ impl SessionStore {
         client_info: ClientInfo,
         client_capabilities: Capabilities,
         protocol_version: String,
+        agent_id: Option<String>,
     ) -> Session {
         let session = Session {
             session_id: session_id.clone(),
@@ -80,6 +83,7 @@ impl SessionStore {
             created_at: Instant::now(),
             last_active_at: Instant::now(),
             initialized: false,
+            agent_id,
         };
 
         self.sessions.lock().unwrap().insert(session_id.clone(), session.clone());
@@ -187,6 +191,7 @@ mod tests {
             client_info,
             capabilities,
             "2025-03-26".to_string(),
+            None,
         );
 
         // Check session exists
@@ -225,6 +230,7 @@ mod tests {
             client_info,
             capabilities,
             "2025-03-26".to_string(),
+            None,
         );
 
         // Create a recent session
@@ -233,12 +239,13 @@ mod tests {
             name: "test-client".to_string(),
             version: "1.0.0".to_string(),
         };
-        
+
         store.create_session(
             recent_session_id.clone(),
             client_info.clone(),
             Capabilities::default(),
             "2025-03-26".to_string(),
+            None,
         );
 
         // Mock time passage (2 hours ago)

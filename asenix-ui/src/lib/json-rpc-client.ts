@@ -120,11 +120,27 @@ class JsonRpcClient {
   }
 
   async banAtom(atom_id: string): Promise<any> {
-    return this.rpcRequest("ban_atom", { atom_id });
+    const response = await fetch(`${this.baseUrl}/api/rspc`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      body: JSON.stringify({ method: "ban_atom", params: { atom_id } }),
+    });
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+    const data = await response.json();
+    if (!data.result) throw new Error("No result in response");
+    return data.result;
   }
 
   async unbanAtom(atom_id: string): Promise<any> {
-    return this.rpcRequest("unban_atom", { atom_id });
+    const response = await fetch(`${this.baseUrl}/api/rspc`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...adminAuthHeader() },
+      body: JSON.stringify({ method: "unban_atom", params: { atom_id } }),
+    });
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+    const data = await response.json();
+    if (!data.result) throw new Error("No result in response");
+    return data.result;
   }
 
   // ── Review ────────────────────────────────────────────────────────────────

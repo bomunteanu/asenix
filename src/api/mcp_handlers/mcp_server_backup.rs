@@ -21,6 +21,12 @@ pub struct InitializeRequest {
     pub capabilities: Capabilities,
     #[serde(rename = "clientInfo")]
     pub client_info: ClientInfo,
+    /// Optional agent credentials. If provided they are validated; invalid credentials are rejected.
+    /// If absent, an anonymous session is created (tool calls still require per-request auth).
+    #[serde(default)]
+    pub agent_id: Option<String>,
+    #[serde(default)]
+    pub api_token: Option<String>,
 }
 
 #[derive(serde::Serialize)]
@@ -289,7 +295,7 @@ pub async fn handle_mcp_request(
     }
 
     let result = match method {
-        "initialize" => match handle_initialize(&state.session_store, &request).await {
+        "initialize" => match handle_initialize(&state, &request).await {
             Ok(response) => return Ok(response),
             Err(error) => Err(error),
         },
@@ -348,7 +354,7 @@ pub async fn handle_mcp_request(
     }
 }
 
-async fn handle_initialize(session_store: &SessionStore, request: &Value) -> Result<Response> {
+async fn handle_initialize(state: &AppState, request: &Value) -> Result<Response> {
     let params = request
         .get("params")
         .cloned()
@@ -357,14 +363,39 @@ async fn handle_initialize(session_store: &SessionStore, request: &Value) -> Res
     let init_req: InitializeRequest =
         serde_json::from_value(params).map_err(|_| MoteError::Validation("Invalid initialize params".to_string()))?;
 
+    // Validate agent credentials if provided. If the caller supplies agent_id/api_token
+    // they must be valid — reject early rather than silently creating an anonymous session.
+    let bound_agent_id: Option<String> = match (init_req.agent_id, init_req.api_token) {
+        (Some(agent_id), Some(api_token)) => {
+            let agent = crate::db::queries::get_agent_by_token(&state.pool, &api_token)
+                .await
+                .map_err(|_| MoteError::Authentication("Credential validation failed".to_string()))?
+                .ok_or_else(|| MoteError::Authentication("Invalid api_token".to_string()))?;
+
+            if agent.agent_id != agent_id {
+                return Err(MoteError::Authentication(
+                    "api_token does not match agent_id".to_string(),
+                ));
+            }
+            Some(agent_id)
+        }
+        (Some(_), None) | (None, Some(_)) => {
+            return Err(MoteError::Validation(
+                "Provide both agent_id and api_token, or neither".to_string(),
+            ));
+        }
+        (None, None) => None, // anonymous session — tool calls still require per-request auth
+    };
+
     let negotiated_version = negotiate_protocol_version(&init_req.protocol_version).to_string();
     let session_id = generate_session_id();
 
-    session_store.create_session(
+    state.session_store.create_session(
         session_id.clone(),
         init_req.client_info,
         init_req.capabilities,
         negotiated_version.clone(),
+        bound_agent_id,
     );
 
     let response_payload = InitializeResult {

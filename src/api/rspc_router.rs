@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::state::AppState;
 use axum::{
     extract::State,
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::Json,
 };
 
@@ -127,8 +127,26 @@ fn domain_atom_to_rspc(a: crate::domain::atom::Atom) -> Atom {
     }
 }
 
+fn require_owner_jwt(headers: &HeaderMap) -> Result<(), StatusCode> {
+    let secret = std::env::var("OWNER_SECRET").unwrap_or_default();
+    if secret.is_empty() {
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+    let token = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .ok_or(StatusCode::UNAUTHORIZED)?;
+    if crate::api::auth::verify_owner_jwt(token, &secret) {
+        Ok(())
+    } else {
+        Err(StatusCode::UNAUTHORIZED)
+    }
+}
+
 pub async fn handle_rspc_request(
     State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
     Json(request): Json<RspcRequest<serde_json::Value>>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
     match request.method.as_str() {
@@ -390,6 +408,7 @@ pub async fn handle_rspc_request(
             Ok(Json(serde_json::to_value(RspcResponse { result }).unwrap()))
         }
         "ban_atom" => {
+            require_owner_jwt(&headers)?;
             let params = request.params.unwrap_or(serde_json::json!({}));
             let atom_id: String = serde_json::from_value(params["atom_id"].clone())
                 .map_err(|_| StatusCode::BAD_REQUEST)?;
@@ -401,6 +420,7 @@ pub async fn handle_rspc_request(
             Ok(Json(serde_json::to_value(RspcResponse { result: serde_json::json!({ "status": "banned" }) }).unwrap()))
         }
         "unban_atom" => {
+            require_owner_jwt(&headers)?;
             let params = request.params.unwrap_or(serde_json::json!({}));
             let atom_id: String = serde_json::from_value(params["atom_id"].clone())
                 .map_err(|_| StatusCode::BAD_REQUEST)?;

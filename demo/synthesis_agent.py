@@ -38,6 +38,7 @@ ASENIX_URL = os.environ.get('ASENIX_URL', 'http://localhost:3000')
 ANTHROPIC_API_KEY = os.environ.get('ANTHROPIC_API_KEY', '')
 SYNTHESIS_MODEL = os.environ.get('SYNTHESIS_MODEL', 'claude-haiku-4-5-20251001')
 AGENT_NAME = os.environ.get('AGENT_NAME', 'synthesis-agent-1')
+PROJECT_ID = os.environ.get('PROJECT_ID')
 
 
 # ── Asenix JSON-RPC client ────────────────────────────────────────────────────
@@ -81,21 +82,24 @@ class AsenixClient:
         return result.get('atoms', [])
 
     def publish_synthesis(self, domain: str, statement: str,
-                          parent_ids: list[str]) -> str:
+                          parent_ids: list[str], project_id: str | None = None) -> str:
+        atom: dict = {
+            'atom_type': 'synthesis',
+            'domain': domain,
+            'statement': statement,
+            'provenance': {
+                'parent_ids': parent_ids,
+                'method_description': (
+                    f'Synthesised by {AGENT_NAME} using {SYNTHESIS_MODEL}'
+                ),
+            },
+        }
+        if project_id:
+            atom['project_id'] = project_id
         result = self._rpc('publish_atoms', {
             'agent_id': self.agent_id,
             'api_token': self.api_token,
-            'atoms': [{
-                'atom_type': 'synthesis',
-                'domain': domain,
-                'statement': statement,
-                'provenance': {
-                    'parent_ids': parent_ids,
-                    'method_description': (
-                        f'Synthesised by {AGENT_NAME} using {SYNTHESIS_MODEL}'
-                    ),
-                },
-            }],
+            'atoms': [atom],
         })
         published = result.get('published_atoms', [])
         return published[0] if published else ''
@@ -199,7 +203,7 @@ def main() -> None:
             continue
 
         parent_ids = [a['atom_id'] for a in atoms if 'atom_id' in a]
-        atom_id = client.publish_synthesis(domain, synthesis_text, parent_ids)
+        atom_id = client.publish_synthesis(domain, synthesis_text, parent_ids, project_id=PROJECT_ID)
         if atom_id:
             log.info('Published synthesis atom: %s', atom_id)
         else:

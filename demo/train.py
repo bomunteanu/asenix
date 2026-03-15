@@ -27,14 +27,32 @@ OPTIMIZER        = "sgd"        # "sgd" | "adam" | "adamw"
 WEIGHT_DECAY     = 5e-4
 MOMENTUM         = 0.9          # used by SGD only
 SCHEDULER        = "onecycle"   # "cosine" | "step" | "onecycle" | "none"
-AUGMENTATION     = "standard"   # "none" | "standard" | "strong"
+AUGMENTATION     = "strong"     # "none" | "standard" | "strong"
 LABEL_SMOOTHING  = 0.1          # 0.0 = standard cross-entropy
-DROPOUT          = 0.0
-NOTES            = "[4,4,4] base_ch=48 DROPOUT=0.0 + SGD+OneCycleLR + std aug + LS=0.1 — removing redundant regularizer to speed convergence"
+DROPOUT          = 0.1
+NOTES            = "SE-ResNet ch=96 [3,3,3] strong aug + SGD+OneCycleLR + LS=0.1 — ch=80 iter1 achieved 0.9361 new best with 1.87% train/val gap; width scaling monotonically positive, ch=96 next unexplored step"
 
 # ── Model definition ─────────────────────────────────────────────────────────
 import torch.nn as nn
 import torch.nn.functional as F
+
+
+class SEBlock(nn.Module):
+    """Squeeze-and-Excitation channel attention."""
+    def __init__(self, channels, reduction=16):
+        super().__init__()
+        mid = max(channels // reduction, 4)
+        self.fc = nn.Sequential(
+            nn.Linear(channels, mid, bias=False),
+            nn.ReLU(inplace=True),
+            nn.Linear(mid, channels, bias=False),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, x):
+        s = x.mean(dim=(2, 3))          # global average pool: (N, C)
+        s = self.fc(s).unsqueeze(-1).unsqueeze(-1)   # (N, C, 1, 1)
+        return x * s
 
 
 class ResBlock(nn.Module):
@@ -44,6 +62,7 @@ class ResBlock(nn.Module):
         self.bn1   = nn.BatchNorm2d(out_ch)
         self.conv2 = nn.Conv2d(out_ch, out_ch, 3, 1, padding=1, bias=False)
         self.bn2   = nn.BatchNorm2d(out_ch)
+        self.se    = SEBlock(out_ch)
         self.skip  = nn.Sequential()
         if stride != 1 or in_ch != out_ch:
             self.skip = nn.Sequential(
@@ -54,14 +73,15 @@ class ResBlock(nn.Module):
     def forward(self, x):
         out = F.relu(self.bn1(self.conv1(x)))
         out = self.bn2(self.conv2(out))
+        out = self.se(out)
         return F.relu(out + self.skip(x))
 
 
 class Model(nn.Module):
-    """3-stage residual network. Agents may replace this class entirely."""
+    """3-stage SE-ResNet. SE channel attention improves generalization with minimal param overhead."""
 
-    NUM_BLOCKS   = [4, 4, 4]   # blocks per stage
-    BASE_CHANNELS = 48          # channels in stage 1; stages 2/3 are ×2 and ×4
+    NUM_BLOCKS   = [3, 3, 3]   # blocks per stage
+    BASE_CHANNELS = 96          # channels in stage 1; stages 2/3 are ×2 and ×4
 
     def __init__(self):
         super().__init__()

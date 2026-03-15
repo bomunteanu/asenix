@@ -854,6 +854,7 @@ pub async fn handle_ban_atom(
     state: &AppState,
     params: Option<Value>,
 ) -> Result<Value> {
+    authenticate_and_rate_limit(state, &params).await?;
     let params = params.ok_or_else(|| MoteError::Validation("Missing params".to_string()))?;
     let atom_id: String = serde_json::from_value(params["atom_id"].clone())
         .map_err(|_| MoteError::Validation("atom_id field required".to_string()))?;
@@ -865,6 +866,7 @@ pub async fn handle_unban_atom(
     state: &AppState,
     params: Option<Value>,
 ) -> Result<Value> {
+    authenticate_and_rate_limit(state, &params).await?;
     let params = params.ok_or_else(|| MoteError::Validation("Missing params".to_string()))?;
     let atom_id: String = serde_json::from_value(params["atom_id"].clone())
         .map_err(|_| MoteError::Validation("atom_id field required".to_string()))?;

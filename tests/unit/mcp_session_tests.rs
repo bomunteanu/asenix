@@ -24,6 +24,7 @@ async fn test_session_lifecycle() {
         client_info,
         capabilities,
         "2025-03-26".to_string(),
+        None,
     );
 
     // Check session exists
@@ -57,6 +58,7 @@ async fn test_session_cleanup() {
         client_info,
         Capabilities::default(),
         "2025-03-26".to_string(),
+        None,
     );
 
     // Create a recent session
@@ -65,12 +67,13 @@ async fn test_session_cleanup() {
         name: "test-client".to_string(),
         version: "1.0.0".to_string(),
     };
-    
+
     store.create_session(
         recent_session_id.clone(),
         client_info,
         Capabilities::default(),
         "2025-03-26".to_string(),
+        None,
     );
 
     // Mock time passage (2 hours ago)
@@ -120,6 +123,7 @@ async fn test_multiple_sessions() {
             client_info,
             Capabilities::default(),
             "2025-03-26".to_string(),
+            None,
         );
     }
     

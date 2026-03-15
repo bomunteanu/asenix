@@ -7,7 +7,6 @@ import GraphLegend from '#/components/GraphLegend'
 import { useEffect, useState } from 'react'
 import type { Atom } from '#/lib/bindings'
 import { HelpCircle, X } from 'lucide-react'
-import { useSSE } from '#/lib/use-sse'
 import { useLiveFeed } from '#/stores/live-feed'
 import { useActiveProject } from '#/stores/active-project'
 
@@ -41,15 +40,14 @@ function FieldMapComponent() {
 
   const { activeProject } = useActiveProject()
   const queryClient = useQueryClient()
-  const { recentAtomIds, recentEvents } = useSSE({
-    types: ['atom_published'],
-    onEvent: () => queryClient.invalidateQueries({ queryKey: ['fieldMap'] }),
-  })
-  const setRecentEvents = useLiveFeed(s => s.setRecentEvents)
+  const recentAtomIds = useLiveFeed(s => s.recentAtomIds)
+  const recentEvents = useLiveFeed(s => s.recentEvents)
 
   useEffect(() => {
-    setRecentEvents(recentEvents)
-  }, [recentEvents, setRecentEvents])
+    if (recentEvents.length > 0) {
+      queryClient.invalidateQueries({ queryKey: ['fieldMap'] })
+    }
+  }, [recentEvents, queryClient])
 
   const { data: graphData, isLoading, error } = useQuery({
     queryKey: ['fieldMap', activeProject?.project_id],

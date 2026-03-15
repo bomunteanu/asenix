@@ -56,7 +56,7 @@ pub async fn confirm_agent(pool: &PgPool, confirmation: AgentConfirmation) -> Re
     verify_signature(&agent.public_key, &challenge, &signature)?;
     
     // Confirm agent using runtime query
-    sqlx::query("UPDATE agents SET confirmed = true, challenge = NULL WHERE agent_id = $1")
+    sqlx::query("UPDATE agents SET confirmed = true, challenge = NULL, reliability = COALESCE(reliability, 0.5) WHERE agent_id = $1")
         .bind(&confirmation.agent_id)
         .execute(pool)
         .await?;

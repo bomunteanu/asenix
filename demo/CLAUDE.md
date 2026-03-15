@@ -163,6 +163,7 @@ in your edited train.py** — this is what enables contradiction detection:
     {
       "atom_type": "finding",
       "domain": "cifar10_resnet",
+      "project_id": "proj_cifar10_resnet",
       "statement": "Deeper ResNet [3,3,3] with base_ch=32, SGD+cosine+standard_aug achieves val_accuracy=0.8901 vs [2,2,2] baseline 0.8534 — additional depth reduces underfitting",
       "conditions": {
         "learning_rate": 0.05,

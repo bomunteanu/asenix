@@ -15,6 +15,7 @@ import { useTheme } from '#/stores/theme'
 import { useLiveFeed } from '#/stores/live-feed'
 import { useActiveProject } from '#/stores/active-project'
 import ProjectSwitcher from '#/components/ProjectSwitcher'
+import { useSSE } from '#/lib/use-sse'
 import { useEffect } from 'react'
 import type { ReactNode } from 'react'
 
@@ -34,14 +35,18 @@ export default function Layout({ children }: LayoutProps) {
   })
 
   const { theme, toggleTheme } = useTheme()
-  const recentEvents = useLiveFeed(s => s.recentEvents)
   const queryClient = useQueryClient()
+  const setRecentEvents = useLiveFeed(s => s.setRecentEvents)
+  const setRecentAtomIds = useLiveFeed(s => s.setRecentAtomIds)
+  const recentEvents = useLiveFeed(s => s.recentEvents)
 
-  useEffect(() => {
-    if (recentEvents.length > 0) {
-      queryClient.invalidateQueries({ queryKey: ['atomCount'] })
-    }
-  }, [recentEvents, queryClient])
+  const { recentEvents: sseEvents, recentAtomIds } = useSSE({
+    types: ['atom_published'],
+    onEvent: () => queryClient.invalidateQueries({ queryKey: ['atomCount'] }),
+  })
+
+  useEffect(() => { setRecentEvents(sseEvents) }, [sseEvents, setRecentEvents])
+  useEffect(() => { setRecentAtomIds(recentAtomIds) }, [recentAtomIds, setRecentAtomIds])
 
   const atomCount = atomsData?.total ?? 0
 
