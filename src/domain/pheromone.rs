@@ -1,12 +1,10 @@
 use serde_json::Value;
 
 /// Pheromone math functions - pure calculations with no side effects
-/// 
+///
 /// MVP Simplifications (documented for future reference):
-/// - Attraction is not dampened by active claim count
-/// - Repulsion never decreases via superseding evidence  
+/// - Repulsion never decreases via superseding evidence
 /// - Replication-weighted attraction is not implemented
-/// - Decay uses created_at instead of last_activity_at
 /// - Custom scoring functions in get_suggestions are not supported
 ///
 /// Compute attraction boost based on metric improvement.
@@ -171,6 +169,23 @@ pub fn is_higher_better(metrics: &Value, metric_name: &str) -> bool {
         }
         None => true, // Default to higher_better
     }
+}
+
+/// Compute the composite suggestion score used to rank candidate atoms.
+///
+/// Formula: `novelty × (1 + disagreement) × attraction / (1 + repulsion) / (1 + active_claims)`
+///
+/// `active_claims` is the number of currently-active research-direction claims on the atom.
+/// Each additional claim divides the effective score, dampening stampedes where many agents
+/// pile into the same direction simultaneously.
+pub fn suggestion_score(
+    attraction: f64,
+    repulsion: f64,
+    novelty: f64,
+    disagreement: f64,
+    active_claims: u32,
+) -> f64 {
+    novelty * (1.0 + disagreement) * attraction / (1.0 + repulsion) / (1.0 + active_claims as f64)
 }
 
 #[cfg(test)]

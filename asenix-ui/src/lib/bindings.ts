@@ -15,10 +15,12 @@ export interface Atom {
   ph_disagreement: number;
   ban_flag: boolean;
   retracted: boolean;
+  created_at: string;
 }
 
 export interface SearchAtomsResponse {
   atoms: Atom[];
+  total: number;
 }
 
 export interface HealthResponse {
@@ -46,6 +48,12 @@ export interface Edge {
 export interface GraphResponse {
   atoms: Atom[];
   edges: Edge[];
+}
+
+export interface GraphWithEmbeddingsResponse {
+  atoms: Atom[];
+  edges: Edge[];
+  embeddings: Record<string, number[]>;
 }
 
 // rspc procedure types

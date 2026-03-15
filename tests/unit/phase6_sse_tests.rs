@@ -74,17 +74,17 @@ async fn setup_test_state() -> Arc<AppState> {
 #[tokio::test]
 async fn test_sse_event_subscription() {
     let state = setup_test_state().await;
-    
-    // Test valid subscription
+
+    // Test valid subscription with spatial filter
     let query = asenix::api::sse::SseQueryParams {
-        region: "0.1,0.2,0.3".to_string(),
-        radius: 0.5,
-        types: "atom_published".to_string(),
+        region: Some("0.1,0.2,0.3".to_string()),
+        radius: Some(0.5),
+        types: Some("atom_published".to_string()),
     };
-    
+
     let response = sse_events(State(state), Query(query))
         .await;
-    
+
     assert!(response.is_ok(), "SSE subscription should succeed");
 }
 
@@ -107,9 +107,9 @@ async fn test_sse_event_filtering() {
     
     // Test that filtering works
     let query = asenix::api::sse::SseQueryParams {
-        region: "0.1,0.2,0.3".to_string(),
-        radius: 0.5,
-        types: "atom_published".to_string(),
+        region: Some("0.1,0.2,0.3".to_string()),
+        radius: Some(0.5),
+        types: Some("atom_published".to_string()),
     };
     
     let response = sse_events(State(state), Query(query))
@@ -124,9 +124,9 @@ async fn test_sse_invalid_radius() {
     
     // Test invalid radius (negative)
     let query = asenix::api::sse::SseQueryParams {
-        region: "0.1,0.2,0.3".to_string(),
-        radius: -0.5,
-        types: "atom_published".to_string(),
+        region: Some("0.1,0.2,0.3".to_string()),
+        radius: Some(-0.5),
+        types: Some("atom_published".to_string()),
     };
     
     let response = sse_events(State(state), Query(query))
@@ -141,9 +141,9 @@ async fn test_sse_invalid_region_dimension() {
     
     // Test invalid region dimension (empty string)
     let query = asenix::api::sse::SseQueryParams {
-        region: "".to_string(), // Invalid region
-        radius: 0.5,
-        types: "atom_published".to_string(),
+        region: Some("".to_string()), // Invalid region
+        radius: Some(0.5),
+        types: Some("atom_published".to_string()),
     };
     
     let response = sse_events(State(state), Query(query))
@@ -173,6 +173,61 @@ async fn test_typed_sse_event_serialization() {
             assert_eq!(atom_id, "test-atom-1");
         }
         _ => panic!("Expected AtomPublished event"),
+    }
+}
+
+#[tokio::test]
+async fn test_sse_no_params_succeeds() {
+    let state = setup_test_state().await;
+
+    // All params absent — should open the stream without error
+    let query = asenix::api::sse::SseQueryParams {
+        region: None,
+        radius: None,
+        types: None,
+    };
+
+    let response = sse_events(State(state), Query(query)).await;
+    assert!(response.is_ok(), "SSE subscription with no params should succeed");
+}
+
+#[tokio::test]
+async fn test_sse_region_without_radius_rejected() {
+    let state = setup_test_state().await;
+
+    // region provided but radius absent — should return 400
+    let query = asenix::api::sse::SseQueryParams {
+        region: Some("0.1,0.2,0.3".to_string()),
+        radius: None,
+        types: Some("atom_published".to_string()),
+    };
+
+    let response = sse_events(State(state), Query(query)).await;
+    assert!(response.is_err(), "Region without radius should be rejected");
+    if let Err((status, _)) = response {
+        assert_eq!(status, axum::http::StatusCode::BAD_REQUEST);
+    }
+}
+
+#[tokio::test]
+async fn test_sse_synthesis_needed_has_domain() {
+    let event = TypedSseEvent::SynthesisNeeded {
+        cluster_center: vec![0.1, 0.2, 0.3],
+        atom_count: 25,
+        domain: "machine_learning".to_string(),
+    };
+
+    let serialized = serde_json::to_string(&event).unwrap();
+    assert!(serialized.contains("synthesis_needed"));
+    assert!(serialized.contains("machine_learning"));
+
+    let deserialized: TypedSseEvent = serde_json::from_str(&serialized).unwrap();
+    match deserialized {
+        TypedSseEvent::SynthesisNeeded { domain, atom_count, .. } => {
+            assert_eq!(domain, "machine_learning");
+            assert_eq!(atom_count, 25);
+        }
+        _ => panic!("Expected SynthesisNeeded event"),
     }
 }
 

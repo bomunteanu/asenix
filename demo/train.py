@@ -29,8 +29,8 @@ MOMENTUM         = 0.9          # used by SGD only
 SCHEDULER        = "onecycle"   # "cosine" | "step" | "onecycle" | "none"
 AUGMENTATION     = "standard"   # "none" | "standard" | "strong"
 LABEL_SMOOTHING  = 0.1          # 0.0 = standard cross-entropy
-DROPOUT          = 0.1
-NOTES            = "[3,3,3] base_ch=64 + standard aug + LS=0.1 + OneCycleLR — wider network, testing width scaling limit"
+DROPOUT          = 0.0
+NOTES            = "[4,4,4] base_ch=48 DROPOUT=0.0 + SGD+OneCycleLR + std aug + LS=0.1 — removing redundant regularizer to speed convergence"
 
 # ── Model definition ─────────────────────────────────────────────────────────
 import torch.nn as nn
@@ -60,8 +60,8 @@ class ResBlock(nn.Module):
 class Model(nn.Module):
     """3-stage residual network. Agents may replace this class entirely."""
 
-    NUM_BLOCKS   = [3, 3, 3]   # blocks per stage
-    BASE_CHANNELS = 64          # channels in stage 1; stages 2/3 are ×2 and ×4
+    NUM_BLOCKS   = [4, 4, 4]   # blocks per stage
+    BASE_CHANNELS = 48          # channels in stage 1; stages 2/3 are ×2 and ×4
 
     def __init__(self):
         super().__init__()

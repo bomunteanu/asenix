@@ -78,24 +78,44 @@ echo "✓ Credentials saved to $CONFIG_FILE"
 # ── 5. Post seed bounty ───────────────────────────────────────────────────────
 echo ""
 echo "▶ Posting seed bounty to bootstrap exploration ..."
+BOUNTY_PAYLOAD=$(python3 -c "
+import json, sys
+payload = {
+    'jsonrpc': '2.0',
+    'method': 'publish_atoms',
+    'id': 2,
+    'params': {
+        'agent_id': sys.argv[1],
+        'api_token': sys.argv[2],
+        'atoms': [{
+            'atom_type': 'bounty',
+            'domain': 'cifar10_resnet',
+            'statement': 'Maximise CIFAR-10 val_accuracy using a 3-stage residual network (train.py). Baseline: SGD+cosine+standard_aug, num_blocks=[2,2,2], base_channels=32, 20 epochs achieves ~0.83-0.86. Target: >0.92. Key axes to explore: (1) strong augmentation + label smoothing, (2) OneCycleLR with higher peak LR, (3) wider/deeper networks, (4) AdamW vs SGD.',
+            'conditions': {
+                'num_blocks': None,
+                'base_channels': None,
+                'optimizer': None,
+                'scheduler': None,
+                'augmentation': None,
+                'label_smoothing': None,
+                'dropout': 0.1,
+                'batch_size': 128,
+                'weight_decay': 0.0005
+            },
+            'metrics': [
+                {'name': 'val_accuracy',  'direction': 'maximize'},
+                {'name': 'val_loss',      'direction': 'minimize'},
+                {'name': 'train_time_s',  'direction': 'minimize', 'unit': 'seconds'}
+            ],
+            'provenance': {'method_description': 'Human-authored seed bounty for CIFAR-10 architecture search'}
+        }]
+    }
+}
+print(json.dumps(payload))
+" "$AGENT_ID" "$API_TOKEN")
 curl -sf -X POST "$SERVER_URL/rpc" \
     -H "Content-Type: application/json" \
-    -d "{
-        \"jsonrpc\":\"2.0\",
-        \"method\":\"publish_atoms\",
-        \"params\":{
-            \"agent_id\":\"$AGENT_ID\",
-            \"api_token\":\"$API_TOKEN\",
-            \"atoms\":[{
-                \"atom_type\":\"bounty\",
-                \"domain\":\"cifar10_resnet\",
-                \"statement\":\"Maximise CIFAR-10 val_accuracy using a 3-stage residual network (train.py). Baseline: SGD+cosine+standard_aug, num_blocks=[2,2,2], base_channels=32, 20 epochs achieves ~0.83-0.86. Target: >0.92. Key axes to explore: (1) strong augmentation + label smoothing, (2) OneCycleLR with higher peak LR, (3) wider/deeper networks, (4) AdamW vs SGD trade-offs at different training budgets. Publish findings and negative_results to guide other agents.\",
-                \"conditions\":{},
-                \"provenance\":{\"method_description\":\"Human-authored seed bounty for CIFAR-10 architecture search\"}
-            }]
-        },
-        \"id\":2
-    }" > /dev/null && echo "✓ Seed bounty posted" || echo "⚠ Bounty post failed (server may be fresh — continuing)"
+    -d "$BOUNTY_PAYLOAD" > /dev/null && echo "✓ Seed bounty posted" || echo "⚠ Bounty post failed (server may be fresh — continuing)"
 
 # ── 6. Create result dirs ─────────────────────────────────────────────────────
 mkdir -p results logs

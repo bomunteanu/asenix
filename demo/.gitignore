@@ -1,6 +1,7 @@
 results/
 logs/
 .agent_config
+.agent2_config
 .mnist_data/
 .cifar10_data/
 __pycache__/

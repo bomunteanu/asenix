@@ -32,5 +32,15 @@ services:
       timeout: 5s
       retries: 3
 
+  frontend:
+    build:
+      context: ./asenix-ui
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+    depends_on:
+      asenix:
+        condition: service_healthy
+
 volumes:
   postgres_data:

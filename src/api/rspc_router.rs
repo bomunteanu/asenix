@@ -22,11 +22,13 @@ pub struct Atom {
     pub ph_disagreement: f64,
     pub ban_flag: bool,
     pub retracted: bool,
+    pub created_at: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SearchAtomsResponse {
     pub atoms: Vec<Atom>,
+    pub total: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -48,6 +50,14 @@ pub struct Edge {
 pub struct GraphResponse {
     pub atoms: Vec<Atom>,
     pub edges: Vec<Edge>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GraphWithEmbeddingsResponse {
+    pub atoms: Vec<Atom>,
+    pub edges: Vec<Edge>,
+    /// atom_id → flat f32 embedding vector (only present when embedding_status = 'ready')
+    pub embeddings: std::collections::HashMap<String, Vec<f32>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -97,6 +107,14 @@ pub async fn handle_rspc_request(
             let limit: i64 = serde_json::from_value(params["limit"].clone()).unwrap_or(50);
             let offset: i64 = serde_json::from_value(params["offset"].clone()).unwrap_or(0);
 
+            // Count total matching atoms (ignores limit/offset)
+            let total: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM atoms WHERE NOT retracted AND NOT archived"
+            )
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(0);
+
             // Call real database function (same as /rpc endpoint)
             let atoms = crate::db::queries::search_atoms(
                 &state.pool,
@@ -123,9 +141,10 @@ pub async fn handle_rspc_request(
                 ph_disagreement: a.ph_disagreement,
                 ban_flag: a.ban_flag,
                 retracted: a.retracted,
+                created_at: a.created_at.to_rfc3339(),
             }).collect();
 
-            let response = SearchAtomsResponse { atoms };
+            let response = SearchAtomsResponse { atoms, total };
             Ok(Json(serde_json::to_value(RspcResponse { result: response }).unwrap()))
         }
         "getGraph" => {
@@ -155,6 +174,7 @@ pub async fn handle_rspc_request(
                 ph_disagreement: a.ph_disagreement,
                 ban_flag: a.ban_flag,
                 retracted: a.retracted,
+                created_at: a.created_at.to_rfc3339(),
             }).collect();
 
             // Get edges using existing RPC handler
@@ -175,6 +195,66 @@ pub async fn handle_rspc_request(
             }).collect();
 
             let response = GraphResponse { atoms, edges };
+            Ok(Json(serde_json::to_value(RspcResponse { result: response }).unwrap()))
+        }
+        "getGraphWithEmbeddings" => {
+            // Fetch atoms (same as getGraph)
+            let atoms = crate::db::queries::search_atoms(
+                &state.pool, None, None, None, None, 1000, 0,
+            ).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+            let atoms: Vec<Atom> = atoms.into_iter().map(|a| Atom {
+                atom_id: a.atom_id,
+                atom_type: a.atom_type.to_string(),
+                domain: a.domain,
+                statement: a.statement,
+                conditions: a.conditions,
+                metrics: a.metrics,
+                lifecycle: a.lifecycle.to_string(),
+                ph_attraction: a.ph_attraction,
+                ph_repulsion: a.ph_repulsion,
+                ph_novelty: a.ph_novelty,
+                ph_disagreement: a.ph_disagreement,
+                ban_flag: a.ban_flag,
+                retracted: a.retracted,
+                created_at: a.created_at.to_rfc3339(),
+            }).collect();
+
+            // Fetch edges
+            let edges_result = crate::api::rpc_handlers::rpc_backup::handle_get_graph_edges(&state).await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            let edges_data = edges_result.get("edges").and_then(|e| e.as_array())
+                .ok_or_else(|| StatusCode::INTERNAL_SERVER_ERROR)?;
+            let edges: Vec<Edge> = edges_data.iter().filter_map(|edge| {
+                Some(Edge {
+                    source_id: edge.get("source_id")?.as_str()?.to_string(),
+                    target_id: edge.get("target_id")?.as_str()?.to_string(),
+                    edge_type: edge.get("edge_type")?.as_str()?.to_string(),
+                    repl_type: edge.get("repl_type").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                    created_at: edge.get("created_at")?.as_str()?.to_string(),
+                })
+            }).collect();
+
+            // Fetch embeddings for all ready atoms in one query (cast vector → float4[])
+            let emb_rows = sqlx::query(
+                "SELECT atom_id, embedding::float4[] AS emb \
+                 FROM atoms \
+                 WHERE embedding_status = 'ready' AND NOT retracted AND NOT archived"
+            )
+            .fetch_all(&state.pool)
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+            let mut embeddings: std::collections::HashMap<String, Vec<f32>> =
+                std::collections::HashMap::new();
+            for row in emb_rows {
+                use sqlx::Row;
+                let atom_id: String = row.get("atom_id");
+                let emb: Vec<f32> = row.get("emb");
+                embeddings.insert(atom_id, emb);
+            }
+
+            let response = GraphWithEmbeddingsResponse { atoms, edges, embeddings };
             Ok(Json(serde_json::to_value(RspcResponse { result: response }).unwrap()))
         }
         "publish_atoms" => {

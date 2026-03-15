@@ -44,8 +44,13 @@ pub async fn publish_atom(
     let mut tx = pool.begin().await.map_err(MoteError::Database)?;
     
     sqlx::query(
-        "INSERT INTO atoms (atom_id, type, domain, statement, conditions, metrics, provenance, signature, author_agent_id, created_at, embedding_status, lifecycle, retracted, artifact_tree_hash)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), 'pending', 'provisional', false, $10)"
+        "INSERT INTO atoms (atom_id, type, domain, statement, conditions, metrics, provenance, signature, author_agent_id, created_at, embedding_status, lifecycle, retracted, artifact_tree_hash, review_status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), 'pending', 'provisional', false, $10,
+           CASE WHEN EXISTS(
+             SELECT 1 FROM agents
+             WHERE agent_id = $9 AND reliability >= 0.8 AND atoms_published >= 5
+           ) THEN 'auto_approved' ELSE 'pending' END
+         )"
     )
     .bind(&atom_id)
     .bind(atom_input.atom_type.to_string())

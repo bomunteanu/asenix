@@ -177,10 +177,10 @@ in your edited train.py** — this is what enables contradiction detection:
         "base_channels": 32
       },
       "metrics": [
-        {"name": "val_accuracy",  "value": 0.8901, "unit": null, "direction": "higher_better"},
-        {"name": "val_loss",      "value": 0.3124, "unit": null, "direction": "lower_better"},
-        {"name": "train_time_s",  "value": 420.1,  "unit": "seconds", "direction": "lower_better"},
-        {"name": "total_params",  "value": 558000, "unit": "count",   "direction": "lower_better"}
+        {"name": "val_accuracy",  "value": 0.8901, "unit": null, "direction": "maximize"},
+        {"name": "val_loss",      "value": 0.3124, "unit": null, "direction": "minimize"},
+        {"name": "train_time_s",  "value": 420.1,  "unit": "seconds", "direction": "minimize"},
+        {"name": "total_params",  "value": 558000, "unit": "count",   "direction": "minimize"}
       ],
       "provenance": {
         "parent_ids": ["<claim_atom_id or parent atom_id>"],

@@ -116,6 +116,10 @@ async fn main() -> anyhow::Result<()> {
         state.config.hub.embedding_dimension,
         state.config.workers.bounty_sparse_region_max_atoms,
     );
+    let decay_worker = workers::decay::DecayWorker::new(
+        state.pool.clone(),
+        (*state.config).clone(),
+    );
 
     // Spawn workers
     let embedding_handle = tokio::spawn(async move {
@@ -125,6 +129,18 @@ async fn main() -> anyhow::Result<()> {
     let staleness_interval = state.config.workers.staleness_check_interval_minutes;
     let _staleness_handle = tokio::spawn(staleness_worker.start(staleness_interval));
     let _bounty_handle = tokio::spawn(bounty_worker.start(staleness_interval));
+    let decay_interval = state.config.workers.decay_interval_minutes;
+    let _decay_handle = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(decay_interval * 60));
+        loop {
+            interval.tick().await;
+            match decay_worker.run_decay_sweep().await {
+                Ok(n) if n > 0 => tracing::info!("Decay sweep updated {} atoms", n),
+                Ok(_) => {}
+                Err(e) => tracing::error!("Decay sweep failed: {}", e),
+            }
+        }
+    });
 
     // Build router
     let cors = CorsLayer::new()

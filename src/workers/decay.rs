@@ -19,11 +19,13 @@ impl DecayWorker {
     pub async fn run_decay_sweep(&self) -> Result<usize> {
         let start_time = Utc::now();
         
-        // Select atoms with positive attraction that are not archived
+        // Select atoms with positive attraction that are not archived.
+        // Use last_activity_at so that atoms which received new edges recently
+        // (replications, contradictions, etc.) reset their decay clock.
         let rows = sqlx::query(
-            "SELECT atom_id, ph_attraction, created_at 
-             FROM atoms 
-             WHERE ph_attraction > 0.001 
+            "SELECT atom_id, ph_attraction, last_activity_at
+             FROM atoms
+             WHERE ph_attraction > 0.001
              AND NOT archived"
         )
         .fetch_all(&self.pool)
@@ -40,11 +42,13 @@ impl DecayWorker {
 
         for row in rows {
             let atom_id: String = row.get("atom_id");
-            let current_attraction: f64 = row.get("ph_attraction");
-            let created_at: DateTime<Utc> = row.get("created_at");
+            let current_attraction: f64 = row.get::<f32, _>("ph_attraction") as f64;
+            let last_activity_at: DateTime<Utc> = row.get("last_activity_at");
 
-            // Calculate hours elapsed since creation (MVP simplification)
-            let hours_elapsed = Utc::now().signed_duration_since(created_at).num_hours() as f64;
+            // Calculate hours elapsed since last significant activity.
+            // Using last_activity_at (updated on new edges) instead of created_at
+            // prevents over-decaying atoms that received recent replications or derivations.
+            let hours_elapsed = Utc::now().signed_duration_since(last_activity_at).num_hours() as f64;
             
             // Apply decay
             let decayed_attraction = decay_attraction(
@@ -121,7 +125,7 @@ impl DecayWorker {
         let total_atoms: i64 = row.get("total_atoms");
         let atoms_with_attraction: i64 = row.get("atoms_with_attraction");
         let avg_attraction: Option<f64> = row.get("avg_attraction");
-        let max_attraction: Option<f64> = row.get("max_attraction");
+        let max_attraction: Option<f64> = row.get::<Option<f32>, _>("max_attraction").map(|v| v as f64);
 
         Ok(DecayStats {
             total_atoms: total_atoms as usize,

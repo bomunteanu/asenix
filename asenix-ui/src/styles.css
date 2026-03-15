@@ -12,8 +12,8 @@
   --edge-derived: #9ca3af;
   --edge-contradicts: #dc2626;
   --edge-replicates: #059669;
-  --node-bounty: #2d6a4f;
-  --node-finding: #2563eb;
+  --node-bounty: #daa40e;
+  --node-finding: #10B981;
   --node-hypothesis: #7c3aed;
   --node-negative-result: #dc2626;
   --node-synthesis: #ea580c;
@@ -31,8 +31,8 @@
   --edge-derived: #6b7280;
   --edge-contradicts: #ef4444;
   --edge-replicates: #10b981;
-  --node-bounty: #4ade80;
-  --node-finding: #3b82f6;
+  --node-bounty: #daa40e;
+  --node-finding: #10B981;
   --node-hypothesis: #8b5cf6;
   --node-negative-result: #ef4444;
   --node-synthesis: #f97316;
@@ -139,4 +139,12 @@ a {
     opacity: 1;
     transform: translateY(0);
   }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateX(-4px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+.animate-fade-in {
+  animation: fade-in 300ms ease forwards;
 }

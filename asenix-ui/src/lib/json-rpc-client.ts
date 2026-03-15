@@ -2,13 +2,14 @@ import type {
   HealthResponse,
   SearchAtomsInput,
   SearchAtomsResponse,
-  GraphResponse
+  GraphResponse,
+  GraphWithEmbeddingsResponse,
 } from "./bindings";
 
 class JsonRpcClient {
   private baseUrl: string;
 
-  constructor(baseUrl: string = "http://localhost:3000") {
+  constructor(baseUrl: string = "") {
     this.baseUrl = baseUrl;
   }
 
@@ -52,6 +53,10 @@ class JsonRpcClient {
     return this.rspcRequest<GraphResponse>("getGraph");
   }
 
+  async getGraphWithEmbeddings(): Promise<GraphWithEmbeddingsResponse> {
+    return this.rspcRequest<GraphWithEmbeddingsResponse>("getGraphWithEmbeddings");
+  }
+
   // ── Mutations ─────────────────────────────────────────────────────────────
 
   async publishAtoms(params: {
@@ -83,6 +88,30 @@ class JsonRpcClient {
 
   async unbanAtom(atom_id: string): Promise<any> {
     return this.rpcRequest("unban_atom", { atom_id });
+  }
+
+  // ── Review ────────────────────────────────────────────────────────────────
+
+  async getReviewQueue(params?: { domain?: string; limit?: number; offset?: number }): Promise<{ items: any[]; total: number }> {
+    const qs = new URLSearchParams()
+    if (params?.domain) qs.set('domain', params.domain)
+    if (params?.limit !== undefined) qs.set('limit', String(params.limit))
+    if (params?.offset !== undefined) qs.set('offset', String(params.offset))
+    const response = await fetch(`${this.baseUrl}/review?${qs}`, {
+      headers: { 'Content-Type': 'application/json' },
+    })
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
+    return response.json()
+  }
+
+  async reviewAtom(atomId: string, action: 'approve' | 'reject', reason?: string): Promise<any> {
+    const response = await fetch(`${this.baseUrl}/review/${atomId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action, reason }),
+    })
+    if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`)
+    return response.json()
   }
 }
 

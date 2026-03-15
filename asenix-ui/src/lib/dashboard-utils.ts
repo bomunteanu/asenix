@@ -1,120 +1,132 @@
 import type { Atom } from '#/lib/bindings'
 
-export interface ProcessedAtom {
+// A task is derived from a bounty atom that declares metrics + free parameters
+export interface Task {
+  bounty_id: string
+  domain: string
+  statement: string
+  metrics: TaskMetric[]
+  freeParams: string[]            // condition keys set to null  → vary these
+  fixedParams: Record<string, any> // condition keys with values → fixed context
+}
+
+export interface TaskMetric {
+  name: string
+  direction: 'maximize' | 'minimize'
+  unit?: string
+}
+
+export interface Run {
   atom_id: string
   atom_type: string
   lifecycle: string
-  conditions: any
-  metrics: any
-  val_accuracy?: number
-  val_loss?: number
-  optimizer?: string
-  scheduler?: string
-  learning_rate?: number
   time_index: number
+  metricValues: Record<string, number>
+  conditions: Record<string, any>
 }
 
-export interface DashboardStats {
-  totalAtoms: number
-  trainingRuns: number
-  contradictions: number
-  bounties: number
+export interface BestPoint {
+  time_index: number
+  best: number
+}
+
+export interface DomainStats {
+  total: number
+  findings: number
   hypotheses: number
+  contested: number
+  bounties: number
 }
 
-export interface TopRun {
-  rank: number
-  val_accuracy: number
-  val_loss?: number
-  optimizer: string
-  scheduler?: string
-  learning_rate?: number
-  lifecycle: string
-  atom_id: string
+// Pull all bounty atoms that have a non-empty metrics array with direction info
+export function extractTasks(atoms: Atom[]): Task[] {
+  return atoms
+    .filter(a => a.atom_type === 'bounty' && Array.isArray(a.metrics) && (a.metrics as any[]).length > 0)
+    .map(a => {
+      const cond: Record<string, any> = a.conditions ?? {}
+      const freeParams = Object.entries(cond).filter(([, v]) => v === null).map(([k]) => k)
+      const fixedParams = Object.fromEntries(Object.entries(cond).filter(([, v]) => v !== null))
+      return {
+        bounty_id: a.atom_id,
+        domain: a.domain,
+        statement: a.statement,
+        metrics: (a.metrics as any[]).map(m => ({
+          name: m.name as string,
+          direction: (m.direction === 'minimize' || m.direction === 'lower_better' || m.direction === 'lower'
+            ? 'minimize' : 'maximize') as 'maximize' | 'minimize',
+          unit: m.unit as string | undefined,
+        })),
+        freeParams,
+        fixedParams,
+      }
+    })
 }
 
-export interface BestAccuracyPoint {
-  time_index: number
-  best_accuracy: number
-}
-
-export function processAtoms(atoms: Atom[]): ProcessedAtom[] {
-  return atoms.map((atom, index) => {
-    const valAccuracyMetric = atom.metrics?.find((m: any) => m.name === 'val_accuracy')
-    const valLossMetric = atom.metrics?.find((m: any) => m.name === 'val_loss')
-    
-    return {
-      atom_id: atom.atom_id,
-      atom_type: atom.atom_type,
-      lifecycle: atom.lifecycle,
-      conditions: atom.conditions,
-      metrics: atom.metrics,
-      val_accuracy: valAccuracyMetric?.value,
-      val_loss: valLossMetric?.value,
-      optimizer: atom.conditions?.optimizer,
-      scheduler: atom.conditions?.scheduler,
-      learning_rate: atom.conditions?.learning_rate,
-      time_index: index,
-    }
-  })
-}
-
-export function calculateStats(atoms: Atom[]): DashboardStats {
-  const totalAtoms = atoms.length
-  const trainingRuns = atoms.filter(atom => 
-    atom.atom_type === 'finding' && 
-    atom.metrics?.some((m: any) => m.name === 'val_accuracy')
-  ).length
-  const contradictions = atoms.filter(atom => atom.atom_type === 'negative_result').length
-  const bounties = atoms.filter(atom => atom.atom_type === 'bounty').length
-  const hypotheses = atoms.filter(atom => atom.atom_type === 'hypothesis').length
-
-  return {
-    totalAtoms,
-    trainingRuns,
-    contradictions,
-    bounties,
-    hypotheses,
-  }
-}
-
-export function getTopRuns(processedAtoms: ProcessedAtom[]): TopRun[] {
-  const runsWithAccuracy = processedAtoms.filter(atom => 
-    atom.val_accuracy !== undefined && atom.atom_type === 'finding'
-  )
-
-  return runsWithAccuracy
-    .sort((a, b) => (b.val_accuracy || 0) - (a.val_accuracy || 0))
-    .slice(0, 10)
-    .map((atom, index) => ({
-      rank: index + 1,
-      val_accuracy: atom.val_accuracy || 0,
-      val_loss: atom.val_loss,
-      optimizer: atom.optimizer || 'unknown',
-      scheduler: atom.scheduler || 'unknown',
-      learning_rate: atom.learning_rate,
-      lifecycle: atom.lifecycle,
-      atom_id: atom.atom_id,
+// All finding/negative_result atoms in the task's domain that report at least one tracked metric
+export function getRunsForTask(task: Task, atoms: Atom[]): Run[] {
+  const metricNames = new Set(task.metrics.map(m => m.name))
+  return atoms
+    .filter(a =>
+      a.domain === task.domain &&
+      (a.atom_type === 'finding' || a.atom_type === 'negative_result') &&
+      Array.isArray(a.metrics) &&
+      (a.metrics as any[]).some((m: any) => metricNames.has(m.name))
+    )
+    .sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
+    .map((a, i) => ({
+      atom_id: a.atom_id,
+      atom_type: a.atom_type,
+      lifecycle: a.lifecycle,
+      time_index: i,
+      metricValues: Object.fromEntries(
+        (a.metrics as any[])
+          .filter((m: any) => metricNames.has(m.name) && typeof m.value === 'number')
+          .map((m: any) => [m.name as string, m.value as number])
+      ),
+      conditions: (a.conditions as Record<string, any>) ?? {},
     }))
 }
 
-export function calculateBestAccuracyOverTime(processedAtoms: ProcessedAtom[]): BestAccuracyPoint[] {
-  const runsWithAccuracy = processedAtoms.filter(atom => 
-    atom.val_accuracy !== undefined
-  ).sort((a, b) => a.time_index - b.time_index)
+// Running best value over time for a single metric
+export function getBestOverTime(runs: Run[], metric: TaskMetric): BestPoint[] {
+  const sorted = [...runs]
+    .filter(r => r.metricValues[metric.name] !== undefined)
+    .sort((a, b) => a.time_index - b.time_index)
 
-  const bestAccuracyPoints: BestAccuracyPoint[] = []
-  let currentBest = 0
-
-  runsWithAccuracy.forEach(atom => {
-    if (atom.val_accuracy! > currentBest) {
-      currentBest = atom.val_accuracy!
+  const points: BestPoint[] = []
+  let best: number | null = null
+  for (const run of sorted) {
+    const v = run.metricValues[metric.name]
+    if (v === undefined) continue
+    if (best === null ||
+      (metric.direction === 'maximize' && v > best) ||
+      (metric.direction === 'minimize' && v < best)
+    ) {
+      best = v
     }
-    bestAccuracyPoints.push({
-      time_index: atom.time_index,
-      best_accuracy: currentBest,
-    })
-  })
+    points.push({ time_index: run.time_index, best: best! })
+  }
+  return points
+}
 
-  return bestAccuracyPoints
+export function getTopRuns(runs: Run[], metric: TaskMetric, limit = 10): Run[] {
+  return [...runs]
+    .filter(r => r.metricValues[metric.name] !== undefined)
+    .sort((a, b) => {
+      const va = a.metricValues[metric.name] ?? 0
+      const vb = b.metricValues[metric.name] ?? 0
+      return metric.direction === 'maximize' ? vb - va : va - vb
+    })
+    .slice(0, limit)
+}
+
+export function getDomainStats(task: Task, allAtoms: Atom[]): DomainStats {
+  const d = allAtoms.filter(a => a.domain === task.domain)
+  return {
+    total: d.length,
+    findings: d.filter(a => a.atom_type === 'finding').length,
+    hypotheses: d.filter(a => a.atom_type === 'hypothesis').length,
+    contested: d.filter(a => a.lifecycle === 'contested').length,
+    bounties: d.filter(a => a.atom_type === 'bounty').length,
+  }
 }

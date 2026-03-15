@@ -34,6 +34,7 @@ pub enum TypedSseEvent {
     SynthesisNeeded {
         cluster_center: Vec<f64>,
         atom_count: usize,
+        domain: String,
     },
     #[serde(rename = "pheromone_shift")]
     PheromoneShift {
@@ -46,58 +47,53 @@ pub enum TypedSseEvent {
 
 #[derive(Debug, Deserialize)]
 pub struct SseQueryParams {
-    pub region: String,        // comma-separated float vector
-    pub radius: f64,           // spatial radius for filtering
-    pub types: String,         // comma-separated event type strings
+    pub region: Option<String>,   // comma-separated float vector; absent = no spatial filter
+    pub radius: Option<f64>,      // spatial radius for filtering; ignored when region is absent
+    pub types: Option<String>,    // comma-separated event type strings; absent = all types
 }
 
 pub async fn sse_events(
     State(state): State<Arc<AppState>>,
     Query(params): Query<SseQueryParams>,
 ) -> std::result::Result<Response, (StatusCode, String)> {
-    // Parse region vector
-    let region: Vec<f64> = params
-        .region
-        .split(',')
-        .filter_map(|s| s.trim().parse().ok())
-        .collect();
-    
-    if region.is_empty() {
-        return Err((StatusCode::BAD_REQUEST, "Invalid region parameter".to_string()));
-    }
+    // region and radius must be provided together or both absent
+    let spatial_filter: Option<(Vec<f64>, f64)> = match (params.region.as_deref(), params.radius) {
+        (Some(r), Some(radius)) => {
+            if radius <= 0.0 || radius > 1.0 {
+                return Err((StatusCode::BAD_REQUEST, "Radius must be between 0.0 and 1.0".to_string()));
+            }
+            let region: Vec<f64> = r.split(',')
+                .filter_map(|s| s.trim().parse().ok())
+                .collect();
+            if region.is_empty() {
+                return Err((StatusCode::BAD_REQUEST, "Invalid region parameter".to_string()));
+            }
+            Some((region, radius))
+        }
+        (None, None) => None,
+        _ => return Err((StatusCode::BAD_REQUEST, "Provide both region and radius, or neither".to_string())),
+    };
 
-    // Parse event types
-    let requested_types: std::collections::HashSet<String> = params
-        .types
-        .split(',')
-        .map(|s| s.trim().to_string())
-        .collect();
-
-    if requested_types.is_empty() {
-        return Err((StatusCode::BAD_REQUEST, "Invalid types parameter".to_string()));
-    }
-
-    // Validate radius
-    if params.radius <= 0.0 || params.radius > 1.0 {
-        return Err((StatusCode::BAD_REQUEST, "Radius must be between 0.0 and 1.0".to_string()));
-    }
+    // Parse event types — absent means subscribe to all
+    let requested_types: Option<std::collections::HashSet<String>> =
+        params.types.as_deref().map(|t| {
+            t.split(',').map(|s| s.trim().to_string()).collect()
+        });
 
     info!(
-        "SSE subscription: region={}, radius={}, types={:?}",
-        region.len(),
-        params.radius,
+        "SSE subscription: spatial_filter={}, types={:?}",
+        spatial_filter.is_some(),
         requested_types
     );
 
-    let stream = create_sse_stream(state, region, params.radius, requested_types);
+    let stream = create_sse_stream(state, spatial_filter, requested_types);
     Ok(Sse::new(stream).into_response())
 }
 
 fn create_sse_stream(
     state: Arc<AppState>,
-    region: Vec<f64>,
-    radius: f64,
-    requested_types: std::collections::HashSet<String>,
+    spatial_filter: Option<(Vec<f64>, f64)>,
+    requested_types: Option<std::collections::HashSet<String>>,
 ) -> impl Stream<Item = Result<Event, Infallible>> {
     let mut rx = state.sse_broadcast_tx.subscribe();
     let mut event_counter: u64 = 0;
@@ -107,32 +103,45 @@ fn create_sse_stream(
         loop {
             match timeout(Duration::from_secs(3), rx.recv()).await {
                 Ok(Ok(sse_event)) => {
-                    // Check if event type is requested
-                    if !requested_types.contains(&sse_event.event_type) {
-                        continue;
+                    // Check if event type is requested (None = all types pass)
+                    if let Some(ref types) = requested_types {
+                        if !types.contains(&sse_event.event_type) {
+                            continue;
+                        }
                     }
 
-                    // Parse the typed event and check spatial relevance
+                    // Parse the typed event
                     match parse_typed_event(&sse_event.data) {
                         Ok(Some(typed_event)) => {
-                            if let Some(embedding) = get_event_embedding(&typed_event, &state, &mut embedding_cache).await {
-                                let distance = cosine_distance(&region, &embedding);
-                                if distance <= radius {
-                                    event_counter += 1;
-                                    let sse_frame = Event::default()
-                                        .event(&sse_event.event_type)
-                                        .id(event_counter.to_string())
-                                        .data(serde_json::to_string(&typed_event).unwrap_or_else(|e| {
-                                            error!("Failed to serialize event: {}", e);
-                                            "{}".to_string()
-                                        }));
-                                    
-                                    yield Ok(sse_frame);
-                                } else {
-                                    debug!("Event filtered by distance: {} > {}", distance, radius);
+                            // Apply spatial filter only when region+radius were provided
+                            let passes_spatial = match spatial_filter.as_ref() {
+                                None => true,
+                                Some((region, radius)) => {
+                                    if let Some(embedding) = get_event_embedding(&typed_event, &state, &mut embedding_cache).await {
+                                        let distance = cosine_distance(region, &embedding);
+                                        if distance > *radius {
+                                            debug!("Event filtered by distance: {} > {}", distance, radius);
+                                            false
+                                        } else {
+                                            true
+                                        }
+                                    } else {
+                                        debug!("Event filtered - no embedding available");
+                                        false
+                                    }
                                 }
-                            } else {
-                                debug!("Event filtered - no embedding available");
+                            };
+
+                            if passes_spatial {
+                                event_counter += 1;
+                                let sse_frame = Event::default()
+                                    .event(&sse_event.event_type)
+                                    .id(event_counter.to_string())
+                                    .data(serde_json::to_string(&typed_event).unwrap_or_else(|e| {
+                                        error!("Failed to serialize event: {}", e);
+                                        "{}".to_string()
+                                    }));
+                                yield Ok(sse_frame);
                             }
                         }
                         Ok(None) => {

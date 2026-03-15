@@ -8,9 +8,11 @@ import {
   Sun,
   Moon
 } from 'lucide-react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { jsonRpcClient } from '#/lib/json-rpc-client'
 import { useTheme } from '#/stores/theme'
+import { useLiveFeed } from '#/stores/live-feed'
+import { useEffect } from 'react'
 import type { ReactNode } from 'react'
 
 interface LayoutProps {
@@ -25,8 +27,16 @@ export default function Layout({ children }: LayoutProps) {
   })
 
   const { theme, toggleTheme } = useTheme()
+  const recentEvents = useLiveFeed(s => s.recentEvents)
+  const queryClient = useQueryClient()
 
-  const atomCount = atomsData?.atoms?.length || 0
+  useEffect(() => {
+    if (recentEvents.length > 0) {
+      queryClient.invalidateQueries({ queryKey: ['atomCount'] })
+    }
+  }, [recentEvents, queryClient])
+
+  const atomCount = atomsData?.total ?? 0
 
   const navigationItems = [
     { to: '/', label: 'Map', icon: Network },
@@ -44,7 +54,7 @@ export default function Layout({ children }: LayoutProps) {
             <img 
               src={theme === 'dark' ? '/logo_dark_mode.png' : '/logo_light_mode.png'}
               alt="Asenix Logo"
-              className="w-10 h-10"
+              className="w-8 h-8"
             />
             <h1 className="text-xl font-light tracking-tight">Asenix</h1>
           </div>
@@ -73,12 +83,22 @@ export default function Layout({ children }: LayoutProps) {
         {/* Top Bar */}
         <header className="h-16 bg-[var(--bg)] border-b border-[var(--border)] flex items-center justify-between px-6">
           <div className="flex items-center gap-4">
-            <h2 className="text-lg font-light tracking-tight">
-              cifar10_resnet
-            </h2>
             <span className="text-sm text-[var(--text-muted)]">
               {atomCount} atoms
             </span>
+            {recentEvents.length > 0 && (
+              <div className="flex items-center gap-2 overflow-hidden max-w-xs">
+                {recentEvents.map(ev => (
+                  <span
+                    key={ev.id}
+                    className="text-xs text-[var(--text-muted)] whitespace-nowrap animate-fade-in"
+                    title={ev.atom_id}
+                  >
+                    • {ev.atom_type ?? ev.event_type}{ev.domain ? ` in ${ev.domain}` : ''}
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
           
           <div className="flex items-center gap-4">

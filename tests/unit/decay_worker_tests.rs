@@ -268,6 +268,36 @@ async fn test_decay_stats_calculation() {
     assert_eq!(single_stats.avg_attraction, single_stats.max_attraction, "Average should equal max for single atom");
 }
 
+#[test]
+fn test_decay_uses_last_activity_at_semantics() {
+    // Verify that decaying relative to last_activity_at instead of created_at
+    // correctly preserves recently-active atoms.
+    use asenix::domain::pheromone::decay_attraction;
+    use chrono::Utc;
+
+    let half_life_hours = 168.0_f64; // 1 week
+    let floor = 0.001;
+    let attraction = 10.0_f64;
+    let now = Utc::now();
+
+    // Atom A: last active 1 hour ago (recent replication edge).
+    let last_activity_a = now - chrono::Duration::hours(1);
+    let hours_a = now.signed_duration_since(last_activity_a).num_hours() as f64;
+    let decayed_a = decay_attraction(attraction, hours_a, half_life_hours, floor);
+
+    // Atom B: last active 1 week ago (dormant).
+    let last_activity_b = now - chrono::Duration::hours(168);
+    let hours_b = now.signed_duration_since(last_activity_b).num_hours() as f64;
+    let decayed_b = decay_attraction(attraction, hours_b, half_life_hours, floor);
+
+    // The recently-active atom should retain far more attraction.
+    assert!(decayed_a > decayed_b, "Recently-active atom should retain more attraction");
+    // After 1 hour: almost no decay — should be very close to original.
+    assert!(decayed_a > 9.9, "1h of decay should barely affect attraction");
+    // After 1 week: should halve.
+    assert!((decayed_b - 5.0).abs() < 0.01, "Dormant atom should halve after 1 half-life");
+}
+
 #[tokio::test]
 async fn test_decay_worker_integration_points() {
     // Test integration points without actual database

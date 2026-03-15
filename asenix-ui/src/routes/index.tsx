@@ -1,12 +1,14 @@
 import { createFileRoute } from '@tanstack/react-router'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { jsonRpcClient } from '#/lib/json-rpc-client'
 import FieldMap from '#/components/FieldMap'
 import AtomDetailsPanel from '#/components/AtomDetailsPanel'
 import GraphLegend from '#/components/GraphLegend'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { Atom } from '#/lib/bindings'
 import { HelpCircle, X } from 'lucide-react'
+import { useSSE } from '#/lib/use-sse'
+import { useLiveFeed } from '#/stores/live-feed'
 
 export const Route = createFileRoute('/')({
   component: FieldMapComponent,
@@ -36,9 +38,20 @@ function FieldMapComponent() {
   const [selectedAtom, setSelectedAtom] = useState<Atom | null>(null)
   const [showHelp, setShowHelp] = useState(false)
 
+  const queryClient = useQueryClient()
+  const { recentAtomIds, recentEvents } = useSSE({
+    types: ['atom_published'],
+    onEvent: () => queryClient.invalidateQueries({ queryKey: ['fieldMap'] }),
+  })
+  const setRecentEvents = useLiveFeed(s => s.setRecentEvents)
+
+  useEffect(() => {
+    setRecentEvents(recentEvents)
+  }, [recentEvents, setRecentEvents])
+
   const { data: graphData, isLoading, error } = useQuery({
     queryKey: ['fieldMap'],
-    queryFn: () => jsonRpcClient.getGraph(),
+    queryFn: () => jsonRpcClient.getGraphWithEmbeddings(),
     refetchInterval: 30000,
   })
 
@@ -68,6 +81,7 @@ function FieldMapComponent() {
 
   const atoms = graphData?.atoms || []
   const edges = graphData?.edges || []
+  const embeddings = graphData?.embeddings || {}
 
   return (
     <div className="w-full h-full relative">
@@ -76,7 +90,9 @@ function FieldMapComponent() {
       <FieldMap
         atoms={atoms}
         edges={edges}
+        embeddings={embeddings}
         onNodeClick={setSelectedAtom}
+        highlightedAtoms={recentAtomIds}
       />
       <AtomDetailsPanel
         atom={selectedAtom}

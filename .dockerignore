@@ -1,0 +1,8 @@
+target/
+asenix-ui/
+tests/
+.git/
+.fastembed_cache/
+*.md
+.vscode/
+.idea/

@@ -628,8 +628,16 @@ pub async fn handle_publish_atoms(
             artifact_tree_hash
         };
 
-        // Per-atom signature is stored but not verified; accept hex string, raw bytes,
-        // or absent (token-auth agents don't need to sign individual atoms).
+        // TODO: SECURITY — verify atom signature against the author's Ed25519 public key.
+        // Implementation path:
+        //   1. SELECT public_key FROM agents WHERE agent_id = $agent_id
+        //   2. Define a canonical signed message (e.g. SHA-256 of JSON-encoded immutable fields)
+        //   3. Call crate::crypto::signing::verify_signature(&public_key, &message, &signature)
+        //   4. Return 403 if verification fails
+        // Currently skipped because:
+        //   (a) Agents may omit the signature field (signature=[]) — enforcing would be breaking.
+        //   (b) The canonical signed-message format is not yet specified in the protocol.
+        // Before public/untrusted deployment: define the message format and require non-empty sigs.
         let atom_signature: Vec<u8> = match atom_value.get("signature") {
             None | Some(Value::Null) => vec![],
             Some(Value::String(s)) => {
@@ -742,16 +750,28 @@ pub async fn handle_publish_atoms(
             let tgt  = edge["target_atom_id"].as_str().unwrap_or("");
             let etype = edge["edge_type"].as_str().unwrap_or("");
             if src.is_empty() || tgt.is_empty() || etype.is_empty() { continue; }
+            if src == tgt { continue; } // reject self-referential edges
             let valid = matches!(etype, "derived_from"|"inspired_by"|"contradicts"|"replicates"|"summarizes"|"supersedes"|"retracts");
             if !valid { continue; }
-            sqlx::query(
+            if sqlx::query(
                 "INSERT INTO edges (source_id, target_id, type) VALUES ($1,$2,$3)
                  ON CONFLICT (source_id, target_id, type) DO NOTHING"
             )
             .bind(src).bind(tgt).bind(etype)
             .execute(&state.pool)
             .await
-            .ok(); // non-fatal: edge might reference atoms not yet known
+            .map(|r| r.rows_affected() > 0)
+            .unwrap_or(false)
+            {
+                // Reset decay clock on both atoms — a new edge is a sign of activity.
+                sqlx::query(
+                    "UPDATE atoms SET last_activity_at = NOW() WHERE atom_id IN ($1, $2)"
+                )
+                .bind(src).bind(tgt)
+                .execute(&state.pool)
+                .await
+                .ok();
+            }
         }
     }
 
@@ -767,14 +787,24 @@ pub async fn handle_publish_atoms(
             if let Some(parent_ids) = prov["parent_ids"].as_array() {
                 for pid in parent_ids {
                     if let Some(pid_str) = pid.as_str() {
-                        sqlx::query(
+                        if sqlx::query(
                             "INSERT INTO edges (source_id, target_id, type) VALUES ($1,$2,'derived_from')
                              ON CONFLICT (source_id, target_id, type) DO NOTHING"
                         )
                         .bind(atom_id).bind(pid_str)
                         .execute(&state.pool)
                         .await
-                        .ok();
+                        .map(|r| r.rows_affected() > 0)
+                        .unwrap_or(false)
+                        {
+                            sqlx::query(
+                                "UPDATE atoms SET last_activity_at = NOW() WHERE atom_id IN ($1, $2)"
+                            )
+                            .bind(atom_id).bind(pid_str)
+                            .execute(&state.pool)
+                            .await
+                            .ok();
+                        }
                     }
                 }
             }
@@ -906,15 +936,27 @@ pub async fn get_pheromone_suggestions(
     domain_filter: &Option<String>,
     limit: i64,
 ) -> Result<Vec<Value>> {
+    // Score formula: novelty × (1+disagreement) × attraction / (1+repulsion) / (1+active_claims)
+    // Active-claim dampening: each claim on the atom reduces effective attraction, preventing
+    // stampedes where many agents converge on the same direction simultaneously.
     let rows = if let Some(domain) = domain_filter {
         sqlx::query(
-            "SELECT atom_id, type, domain, statement, conditions, metrics, 
-             ph_attraction, ph_repulsion, ph_novelty, ph_disagreement
-             FROM atoms 
-             WHERE NOT archived 
-             AND ph_attraction >= 0
-             AND domain = $1
-             ORDER BY ph_attraction DESC, ph_novelty DESC 
+            "SELECT a.atom_id, a.type, a.domain, a.statement, a.conditions, a.metrics,
+             a.ph_attraction, a.ph_repulsion, a.ph_novelty, a.ph_disagreement,
+             COALESCE(c.claim_count, 0)::bigint AS claim_count,
+             (a.ph_novelty * (1.0 + a.ph_disagreement) * a.ph_attraction
+              / (1.0 + a.ph_repulsion)
+              / (1.0 + COALESCE(c.claim_count, 0))) AS score
+             FROM atoms a
+             LEFT JOIN (
+               SELECT atom_id, COUNT(*) AS claim_count
+               FROM claims WHERE active = true
+               GROUP BY atom_id
+             ) c ON a.atom_id = c.atom_id
+             WHERE NOT a.archived
+             AND a.ph_attraction >= 0
+             AND a.domain = $1
+             ORDER BY score DESC
              LIMIT $2"
         )
         .bind(domain)
@@ -924,12 +966,21 @@ pub async fn get_pheromone_suggestions(
         .map_err(MoteError::Database)?
     } else {
         sqlx::query(
-            "SELECT atom_id, type, domain, statement, conditions, metrics, 
-             ph_attraction, ph_repulsion, ph_novelty, ph_disagreement
-             FROM atoms 
-             WHERE NOT archived 
-             AND ph_attraction >= 0
-             ORDER BY ph_attraction DESC, ph_novelty DESC 
+            "SELECT a.atom_id, a.type, a.domain, a.statement, a.conditions, a.metrics,
+             a.ph_attraction, a.ph_repulsion, a.ph_novelty, a.ph_disagreement,
+             COALESCE(c.claim_count, 0)::bigint AS claim_count,
+             (a.ph_novelty * (1.0 + a.ph_disagreement) * a.ph_attraction
+              / (1.0 + a.ph_repulsion)
+              / (1.0 + COALESCE(c.claim_count, 0))) AS score
+             FROM atoms a
+             LEFT JOIN (
+               SELECT atom_id, COUNT(*) AS claim_count
+               FROM claims WHERE active = true
+               GROUP BY atom_id
+             ) c ON a.atom_id = c.atom_id
+             WHERE NOT a.archived
+             AND a.ph_attraction >= 0
+             ORDER BY score DESC
              LIMIT $1"
         )
         .bind(limit)
@@ -937,10 +988,12 @@ pub async fn get_pheromone_suggestions(
         .await
         .map_err(MoteError::Database)?
     };
-    
+
     let mut suggestions = Vec::new();
-    
+
     for row in rows {
+        let claim_count = row.get::<i64, _>("claim_count");
+        let score = row.get::<f64, _>("score");
         let suggestion = json!({
             "atom_id": row.get::<String, _>("atom_id"),
             "atom_type": row.get::<String, _>("type"),
@@ -949,6 +1002,8 @@ pub async fn get_pheromone_suggestions(
             "conditions": row.get::<serde_json::Value, _>("conditions"),
             "metrics": row.get::<Option<serde_json::Value>, _>("metrics"),
             "source": "pheromone",
+            "score": score,
+            "active_claims": claim_count,
             "pheromone": {
                 "attraction": row.get::<f32, _>("ph_attraction"),
                 "repulsion": row.get::<f32, _>("ph_repulsion"),
@@ -956,10 +1011,10 @@ pub async fn get_pheromone_suggestions(
                 "disagreement": row.get::<f32, _>("ph_disagreement")
             }
         });
-        
+
         suggestions.push(suggestion);
     }
-    
+
     Ok(suggestions)
 }
 

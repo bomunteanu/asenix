@@ -14,8 +14,6 @@
   "dependencies": {
     "@radix-ui/react-navigation-menu": "^1.2.14",
     "@radix-ui/react-slot": "^1.2.4",
-    "@rspc/client": "^0.3.1",
-    "@rspc/react": "^0.2.2",
     "@tailwindcss/vite": "^4.1.18",
     "@tanstack/react-devtools": "latest",
     "@tanstack/react-query": "^5.90.21",
@@ -34,6 +32,7 @@
     "sigma": "^3.0.2",
     "tailwind-merge": "^3.5.0",
     "tailwindcss": "^4.1.18",
+    "umap-js": "^1.4.0",
     "zustand": "^5.0.11"
   },
   "devDependencies": {

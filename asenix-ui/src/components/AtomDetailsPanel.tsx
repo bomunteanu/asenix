@@ -272,7 +272,7 @@ export default function AtomDetailsPanel({ atom, onClose, onNodeSelect }: AtomDe
                     <div className="w-full bg-[var(--border)] rounded-full h-1">
                       <div 
                         className="bg-[var(--accent)] h-1 rounded-full transition-all duration-300"
-                        style={{ width: `${Number(value) * 100}%` }}
+                        style={{ width: `${Math.min(Number(value), 1) * 100}%` }}
                       />
                     </div>
                   </div>

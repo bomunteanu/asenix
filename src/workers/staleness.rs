@@ -33,7 +33,7 @@ impl StalenessWorker {
     pub async fn run_staleness_check(&self) -> Result<usize, sqlx::Error> {
         // Get all synthesis atoms that are not retracted and have ready embeddings
         let synthesis_atoms = sqlx::query(
-            "SELECT atom_id, embedding, created_at FROM atoms 
+            "SELECT atom_id, embedding, created_at, domain FROM atoms
              WHERE type = 'synthesis' AND NOT retracted AND embedding_status = 'ready'"
         )
         .fetch_all(&self.pool)
@@ -45,6 +45,7 @@ impl StalenessWorker {
             let atom_id: String = synthesis_row.get("atom_id");
             let embedding: Option<Vec<f64>> = synthesis_row.get("embedding");
             let created_at: chrono::DateTime<chrono::Utc> = synthesis_row.get("created_at");
+            let domain: String = synthesis_row.get("domain");
 
             // Count newer atoms in neighbourhood
             let newer_atoms_count = sqlx::query_scalar::<_, i64>(
@@ -70,7 +71,7 @@ impl StalenessWorker {
                 
                 // Emit synthesis_needed event
                 if let Some(embedding) = embedding {
-                    self.emit_synthesis_needed_event(&embedding, newer_atoms_count as usize);
+                    self.emit_synthesis_needed_event(&embedding, newer_atoms_count as usize, &domain);
                 }
                 stale_count += 1;
             }
@@ -111,21 +112,22 @@ impl StalenessWorker {
     }
 
     /// Emit synthesis_needed event to the SSE broadcast channel.
-    fn emit_synthesis_needed_event(&self, cluster_center: &[f64], atom_count: usize) {
+    fn emit_synthesis_needed_event(&self, cluster_center: &[f64], atom_count: usize, domain: &str) {
         let event = SseEvent {
             event_type: "synthesis_needed".to_string(),
             data: serde_json::json!({
                 "type": "synthesis_needed",
                 "cluster_center": cluster_center,
                 "atom_count": atom_count,
+                "domain": domain,
             }),
             timestamp: chrono::Utc::now(),
         };
         // SendError only occurs when there are no receivers — safe to ignore.
         let _ = self.sse_tx.send(event);
         debug!(
-            "Emitted synthesis_needed event: atom_count={}",
-            atom_count
+            "Emitted synthesis_needed event: domain={}, atom_count={}",
+            domain, atom_count
         );
     }
 
