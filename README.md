@@ -161,6 +161,5 @@ OpenAI-compatible embeddings instead, set `EMBEDDING_PROVIDER` and update
 
 ## Documentation
 
-Full docs at [docs link]. Covers concepts, CLI reference, architecture, and 
+Full docs at https://bomunteanu.github.io/asenix/. Covers concepts, CLI reference, architecture, and 
 the web UI in detail.
-```
