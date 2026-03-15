@@ -6,6 +6,7 @@ pub struct Atom {
     pub atom_id: String,
     pub atom_type: AtomType,
     pub domain: String,
+    pub project_id: Option<String>,
     pub statement: String,
     pub conditions: serde_json::Value,
     pub metrics: Option<serde_json::Value>,
@@ -99,6 +100,7 @@ impl std::fmt::Display for Lifecycle {
 pub struct AtomInput {
     pub atom_type: AtomType,
     pub domain: String,
+    pub project_id: Option<String>,
     pub statement: String,
     pub conditions: serde_json::Value,
     pub metrics: Option<serde_json::Value>,

@@ -13,6 +13,7 @@ async fn test_acceptance_pipeline_statement_length_validation() {
     let short_atom = AtomInput {
         atom_type: AtomType::Finding,
         domain: "test".to_string(),
+        project_id: None,
         statement: "short".to_string(), // Less than 10 characters
         conditions: json!({}),
         metrics: Some(json!({"accuracy": 0.95})), // Add metrics to avoid atom type rule
@@ -33,6 +34,7 @@ async fn test_acceptance_pipeline_statement_length_validation() {
     let long_atom = AtomInput {
         atom_type: AtomType::Finding,
         domain: "test".to_string(),
+        project_id: None,
         statement: "a".repeat(10001), // More than 10000 characters
         conditions: json!({}),
         metrics: Some(json!({"accuracy": 0.95})), // Add metrics to avoid atom type rule
@@ -53,6 +55,7 @@ async fn test_acceptance_pipeline_statement_length_validation() {
     let valid_length_atom = AtomInput {
         atom_type: AtomType::Finding,
         domain: "test".to_string(),
+        project_id: None,
         statement: "This is a very long statement that exceeds the maximum allowed length for research findings and should therefore be rejected by the acceptance pipeline validation rules".to_string(),
         conditions: json!({}),
         metrics: Some(json!({"accuracy": 0.95})), // Add metrics to avoid atom type rule
@@ -76,6 +79,7 @@ async fn test_acceptance_pipeline_required_fields_validation() {
     let no_domain_atom = AtomInput {
         atom_type: AtomType::Finding,
         domain: "".to_string(),
+        project_id: None,
         statement: "Valid statement length".to_string(),
         conditions: json!({}),
         metrics: None,
@@ -96,6 +100,7 @@ async fn test_acceptance_pipeline_required_fields_validation() {
     let no_statement_atom = AtomInput {
         atom_type: AtomType::Finding,
         domain: "test".to_string(),
+        project_id: None,
         statement: "".to_string(),
         conditions: json!({}),
         metrics: None,
@@ -117,6 +122,7 @@ async fn test_acceptance_pipeline_required_fields_validation() {
     let no_signature_atom = AtomInput {
         atom_type: AtomType::Finding,
         domain: "test".to_string(),
+        project_id: None,
         statement: "Valid statement length".to_string(),
         conditions: json!({}),
         metrics: None,
@@ -142,6 +148,7 @@ async fn test_acceptance_pipeline_domain_validation() {
     let invalid_domain_atom = AtomInput {
         atom_type: AtomType::Finding,
         domain: "test@domain".to_string(), // Invalid character @
+        project_id: None,
         statement: "Valid statement length".to_string(),
         conditions: json!({}),
         metrics: None,
@@ -162,6 +169,7 @@ async fn test_acceptance_pipeline_domain_validation() {
     let long_domain_atom = AtomInput {
         atom_type: AtomType::Finding,
         domain: "a".repeat(101), // More than 100 characters
+        project_id: None,
         statement: "Valid statement length".to_string(),
         conditions: json!({}),
         metrics: None,
@@ -182,6 +190,7 @@ async fn test_acceptance_pipeline_domain_validation() {
     let valid_domain_atom = AtomInput {
         atom_type: AtomType::Finding,
         domain: "test-domain_123".to_string(),
+        project_id: None,
         statement: "Valid statement length".to_string(),
         conditions: json!({}),
         metrics: Some(json!({"accuracy": 0.95})), // Add metrics to avoid atom type rule
@@ -205,6 +214,7 @@ async fn test_acceptance_pipeline_atom_type_limits() {
     let hypothesis_no_conditions = AtomInput {
         atom_type: AtomType::Hypothesis,
         domain: "test".to_string(),
+        project_id: None,
         statement: "Test hypothesis without conditions".to_string(),
         conditions: json!({}), // Empty conditions
         metrics: None,
@@ -225,6 +235,7 @@ async fn test_acceptance_pipeline_atom_type_limits() {
     let finding_no_metrics = AtomInput {
         atom_type: AtomType::Finding,
         domain: "test".to_string(),
+        project_id: None,
         statement: "Test finding without metrics".to_string(),
         conditions: json!({"temperature": 25.0}),
         metrics: None, // No metrics
@@ -245,6 +256,7 @@ async fn test_acceptance_pipeline_atom_type_limits() {
     let valid_hypothesis = AtomInput {
         atom_type: AtomType::Hypothesis,
         domain: "test".to_string(),
+        project_id: None,
         statement: "Test hypothesis with conditions".to_string(),
         conditions: json!({"temperature": 25.0, "pressure": 101.3}),
         metrics: None,
@@ -263,6 +275,7 @@ async fn test_acceptance_pipeline_atom_type_limits() {
     let valid_finding = AtomInput {
         atom_type: AtomType::Finding,
         domain: "test".to_string(),
+        project_id: None,
         statement: "Test finding with metrics".to_string(),
         conditions: json!({"temperature": 25.0}),
         metrics: Some(json!({"accuracy": 0.95})),
@@ -286,6 +299,7 @@ async fn test_acceptance_pipeline_complete_flow() {
     let valid_atom = AtomInput {
         atom_type: AtomType::Finding,
         domain: "research-domain".to_string(),
+        project_id: None,
         statement: "We observed a significant correlation between temperature and reaction rate".to_string(),
         conditions: json!({
             "temperature": 25.0,

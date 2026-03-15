@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useQuery } from '@tanstack/react-query'
 import { useState } from 'react'
 import { jsonRpcClient } from '#/lib/json-rpc-client'
+import { useActiveProject } from '#/stores/active-project'
 import { Card, CardContent, CardHeader, CardTitle } from '#/components/ui/card'
 import MetricScatterChart from '#/components/MetricScatterChart'
 import BestMetricLineChart from '#/components/BestMetricLineChart'
@@ -70,7 +71,7 @@ function TaskView({ task, allAtoms }: { task: Task; allAtoms: any[] }) {
       {task.metrics.map(metric => {
         const bestData = getBestOverTime(runs, metric)
         const topRuns = getTopRuns(runs, metric)
-        const currentBest = bestData.length > 0 ? bestData[bestData.length - 1].best : null
+        const currentBest = bestData.length > 0 ? (bestData[bestData.length - 1]?.best ?? null) : null
 
         return (
           <div key={metric.name} className="space-y-6">
@@ -122,10 +123,11 @@ function TaskView({ task, allAtoms }: { task: Task; allAtoms: any[] }) {
 
 function DashboardComponent() {
   const [activeTab, setActiveTab] = useState(0)
+  const { activeProject } = useActiveProject()
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['dashboard'],
-    queryFn: () => jsonRpcClient.searchAtoms({ limit: 1000 }),
+    queryKey: ['dashboard', activeProject?.project_id],
+    queryFn: () => jsonRpcClient.searchAtoms({ limit: 1000, project_id: activeProject?.project_id }),
     refetchInterval: 30000,
   })
 
@@ -178,7 +180,7 @@ function DashboardComponent() {
         </div>
       )}
 
-      <TaskView task={activeTask} allAtoms={allAtoms} />
+      {activeTask && <TaskView task={activeTask} allAtoms={allAtoms} />}
     </div>
   )
 }

@@ -202,6 +202,7 @@ mod tests {
         let short_atom = AtomInput {
             atom_type: AtomType::Finding,
             domain: "test".to_string(),
+            project_id: None,
             statement: "short".to_string(),
             conditions: json!({}),
             metrics: None,
@@ -220,6 +221,7 @@ mod tests {
         let valid_atom = AtomInput {
             atom_type: AtomType::Finding,
             domain: "test".to_string(),
+            project_id: None,
             statement: "This is a valid statement length".to_string(),
             conditions: json!({}),
             metrics: Some(json!({"accuracy": 0.95})),

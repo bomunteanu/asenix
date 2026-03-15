@@ -48,6 +48,7 @@ async fn test_end_to_end_coordination() -> Result<()> {
     let bounty_input = AtomInput {
         atom_type: AtomType::Bounty,
         domain: "machine_learning".to_string(),
+        project_id: None,
         statement: "Improve accuracy of image classification models on medical datasets".to_string(),
         conditions: json!({
             "task": "image_classification",
@@ -110,6 +111,7 @@ async fn test_end_to_end_coordination() -> Result<()> {
     let finding_input = AtomInput {
         atom_type: AtomType::Finding,
         domain: "machine_learning".to_string(),
+        project_id: None,
         statement: "Achieved 92% accuracy on medical image classification using attention mechanisms".to_string(),
         conditions: json!({
             "task": "image_classification",
@@ -145,6 +147,7 @@ async fn test_end_to_end_coordination() -> Result<()> {
     let contradiction_input = AtomInput {
         atom_type: AtomType::Finding,
         domain: "machine_learning".to_string(),
+        project_id: None,
         statement: "Attention mechanisms do not significantly improve medical image classification accuracy".to_string(),
         conditions: json!({
             "task": "image_classification",
@@ -262,6 +265,7 @@ async fn test_end_to_end_coordination() -> Result<()> {
     let synthesis_input = AtomInput {
         atom_type: AtomType::Synthesis,
         domain: "machine_learning".to_string(),
+        project_id: None,
         statement: "Attention mechanisms show mixed results on medical image classification".to_string(),
         conditions: json!({
             "synthesis_type": "contradiction_resolution",

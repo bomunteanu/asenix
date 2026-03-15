@@ -363,6 +363,7 @@ mod tests {
             atom_id: "test_atom".to_string(),
             atom_type: crate::domain::atom::AtomType::Finding,
             domain: "test".to_string(),
+            project_id: None,
             statement: "Test statement for encoding".to_string(),
             conditions: json!({"model_params": 1000000000.0}),
             metrics: None,

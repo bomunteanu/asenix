@@ -1,9 +1,9 @@
 import { Outlet } from '@tanstack/react-router'
 import { Link } from '@tanstack/react-router'
-import { 
-  Network, 
-  BarChart, 
-  Target, 
+import {
+  Network,
+  BarChart,
+  Target,
   Inbox,
   Sun,
   Moon
@@ -12,6 +12,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { jsonRpcClient } from '#/lib/json-rpc-client'
 import { useTheme } from '#/stores/theme'
 import { useLiveFeed } from '#/stores/live-feed'
+import { useActiveProject } from '#/stores/active-project'
+import ProjectSwitcher from '#/components/ProjectSwitcher'
 import { useEffect } from 'react'
 import type { ReactNode } from 'react'
 
@@ -20,9 +22,13 @@ interface LayoutProps {
 }
 
 export default function Layout({ children }: LayoutProps) {
+  const { activeProject } = useActiveProject()
   const { data: atomsData } = useQuery({
-    queryKey: ['atomCount'],
-    queryFn: () => jsonRpcClient.searchAtoms({ limit: 1 }),
+    queryKey: ['atomCount', activeProject?.project_id],
+    queryFn: () => jsonRpcClient.searchAtoms({
+      limit: 1,
+      project_id: activeProject?.project_id,
+    }),
     refetchInterval: 30000, // Refresh every 30 seconds
   })
 
@@ -101,7 +107,9 @@ export default function Layout({ children }: LayoutProps) {
             )}
           </div>
           
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-3">
+            <ProjectSwitcher />
+
             {/* Theme Toggle */}
             <button
               onClick={toggleTheme}
@@ -114,11 +122,6 @@ export default function Layout({ children }: LayoutProps) {
                 <Sun className="w-4 h-4 text-[var(--text-muted)]" />
               )}
             </button>
-            
-            {/* Placeholder for future actions */}
-            <div className="w-8 h-8 rounded-full bg-[var(--bg-subtle)] flex items-center justify-center">
-              <div className="w-4 h-4 rounded-full bg-[var(--accent)]"></div>
-            </div>
           </div>
         </header>
 

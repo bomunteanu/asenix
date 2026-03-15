@@ -9,6 +9,7 @@ import type { Atom } from '#/lib/bindings'
 import { HelpCircle, X } from 'lucide-react'
 import { useSSE } from '#/lib/use-sse'
 import { useLiveFeed } from '#/stores/live-feed'
+import { useActiveProject } from '#/stores/active-project'
 
 export const Route = createFileRoute('/')({
   component: FieldMapComponent,
@@ -38,6 +39,7 @@ function FieldMapComponent() {
   const [selectedAtom, setSelectedAtom] = useState<Atom | null>(null)
   const [showHelp, setShowHelp] = useState(false)
 
+  const { activeProject } = useActiveProject()
   const queryClient = useQueryClient()
   const { recentAtomIds, recentEvents } = useSSE({
     types: ['atom_published'],
@@ -50,8 +52,8 @@ function FieldMapComponent() {
   }, [recentEvents, setRecentEvents])
 
   const { data: graphData, isLoading, error } = useQuery({
-    queryKey: ['fieldMap'],
-    queryFn: () => jsonRpcClient.getGraphWithEmbeddings(),
+    queryKey: ['fieldMap', activeProject?.project_id],
+    queryFn: () => jsonRpcClient.getGraphWithEmbeddings({ project_id: activeProject?.project_id }),
     refetchInterval: 30000,
   })
 

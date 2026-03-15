@@ -290,6 +290,7 @@ pub async fn handle_search_atoms(
     let type_filter: Option<String> = serde_json::from_value(params["type"].clone()).ok();
     let lifecycle_filter: Option<String> = serde_json::from_value(params["lifecycle"].clone()).ok();
     let text_search: Option<String> = serde_json::from_value(params["query"].clone()).ok();
+    let project_id_filter: Option<String> = serde_json::from_value(params["project_id"].clone()).ok();
     let limit: i64 = serde_json::from_value(params["limit"].clone()).unwrap_or(50);
     let offset: i64 = serde_json::from_value(params["offset"].clone()).unwrap_or(0);
 
@@ -299,6 +300,7 @@ pub async fn handle_search_atoms(
         type_filter.as_deref(),
         lifecycle_filter.as_deref(),
         text_search.as_deref(),
+        project_id_filter.as_deref(),
         limit,
         offset,
     ).await?;
@@ -449,6 +451,7 @@ pub async fn handle_claim_direction(
     let atom_input = crate::domain::atom::AtomInput {
         atom_type: crate::domain::atom::AtomType::Hypothesis,
         domain: domain.clone(),
+        project_id: None,
         statement: hypothesis.clone(),
         conditions: conditions.clone(),
         metrics: None,
@@ -649,9 +652,13 @@ pub async fn handle_publish_atoms(
         let statement: String = serde_json::from_value(atom_value["statement"].clone())
             .map_err(|_| MoteError::Validation("statement field required".to_string()))?;
 
+        let project_id: Option<String> = serde_json::from_value(atom_value["project_id"].clone())
+            .unwrap_or(None);
+
         let atom_input = crate::domain::atom::AtomInput {
             atom_type: atom_type.clone(),
             domain: domain.clone(),
+            project_id,
             statement,
             conditions: conditions.clone(),
             metrics: metrics.clone(),

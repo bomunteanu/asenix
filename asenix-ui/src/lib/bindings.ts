@@ -5,6 +5,7 @@ export interface Atom {
   atom_id: string;
   atom_type: string;
   domain: string;
+  project_id?: string;
   statement: string;
   conditions: any;
   metrics?: any;
@@ -16,6 +17,31 @@ export interface Atom {
   ban_flag: boolean;
   retracted: boolean;
   created_at: string;
+}
+
+export interface Project {
+  project_id: string;
+  name: string;
+  slug: string;
+  description?: string;
+  created_at: string;
+}
+
+export interface ListProjectsResponse {
+  projects: Project[];
+}
+
+export interface CreateProjectInput {
+  name: string;
+  slug: string;
+  description?: string;
+}
+
+export interface UpdateProjectInput {
+  project_id: string;
+  name: string;
+  slug: string;
+  description?: string;
 }
 
 export interface SearchAtomsResponse {
@@ -33,6 +59,7 @@ export interface SearchAtomsInput {
   type?: string;
   lifecycle?: string;
   query?: string;
+  project_id?: string;
   limit?: number;
   offset?: number;
 }
@@ -56,6 +83,10 @@ export interface GraphWithEmbeddingsResponse {
   embeddings: Record<string, number[]>;
 }
 
+export interface GraphInput {
+  project_id?: string;
+}
+
 // rspc procedure types
 export type Procedures = {
   queries: {
@@ -71,8 +102,23 @@ export type Procedures = {
     };
     getGraph: {
       key: "getGraph";
-      input: void;
+      input: GraphInput;
       result: GraphResponse;
+    };
+    listProjects: {
+      key: "listProjects";
+      input: void;
+      result: ListProjectsResponse;
+    };
+    getProject: {
+      key: "getProject";
+      input: { project_id: string };
+      result: Project;
+    };
+    createProject: {
+      key: "createProject";
+      input: CreateProjectInput;
+      result: Project;
     };
   };
   mutations: never;

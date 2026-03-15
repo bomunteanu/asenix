@@ -4,6 +4,10 @@ import type {
   SearchAtomsResponse,
   GraphResponse,
   GraphWithEmbeddingsResponse,
+  GraphInput,
+  Project,
+  ListProjectsResponse,
+  CreateProjectInput,
 } from "./bindings";
 
 class JsonRpcClient {
@@ -49,12 +53,34 @@ class JsonRpcClient {
     return this.rspcRequest<SearchAtomsResponse>("searchAtoms", params);
   }
 
-  async getGraph(): Promise<GraphResponse> {
-    return this.rspcRequest<GraphResponse>("getGraph");
+  async getGraph(params?: GraphInput): Promise<GraphResponse> {
+    return this.rspcRequest<GraphResponse>("getGraph", params);
   }
 
-  async getGraphWithEmbeddings(): Promise<GraphWithEmbeddingsResponse> {
-    return this.rspcRequest<GraphWithEmbeddingsResponse>("getGraphWithEmbeddings");
+  async getGraphWithEmbeddings(params?: GraphInput): Promise<GraphWithEmbeddingsResponse> {
+    return this.rspcRequest<GraphWithEmbeddingsResponse>("getGraphWithEmbeddings", params);
+  }
+
+  // ── Projects ─────────────────────────────────────────────────────────────
+
+  async listProjects(): Promise<ListProjectsResponse> {
+    return this.rspcRequest<ListProjectsResponse>("listProjects");
+  }
+
+  async getProject(project_id: string): Promise<Project> {
+    return this.rspcRequest<Project>("getProject", { project_id });
+  }
+
+  async createProject(params: CreateProjectInput): Promise<Project> {
+    return this.rspcRequest<Project>("createProject", params);
+  }
+
+  async updateProject(params: { project_id: string } & CreateProjectInput): Promise<Project> {
+    return this.rspcRequest<Project>("updateProject", params);
+  }
+
+  async deleteProject(project_id: string): Promise<void> {
+    return this.rspcRequest("deleteProject", { project_id });
   }
 
   // ── Mutations ─────────────────────────────────────────────────────────────
@@ -64,6 +90,7 @@ class JsonRpcClient {
       atom_type: string;
       statement: string;
       domain: string;
+      project_id?: string;
       conditions: Record<string, any>;
       metrics?: Array<any>;
     }>;
@@ -92,9 +119,10 @@ class JsonRpcClient {
 
   // ── Review ────────────────────────────────────────────────────────────────
 
-  async getReviewQueue(params?: { domain?: string; limit?: number; offset?: number }): Promise<{ items: any[]; total: number }> {
+  async getReviewQueue(params?: { domain?: string; project_id?: string; limit?: number; offset?: number }): Promise<{ items: any[]; total: number }> {
     const qs = new URLSearchParams()
     if (params?.domain) qs.set('domain', params.domain)
+    if (params?.project_id) qs.set('project_id', params.project_id)
     if (params?.limit !== undefined) qs.set('limit', String(params.limit))
     if (params?.offset !== undefined) qs.set('offset', String(params.offset))
     const response = await fetch(`${this.baseUrl}/review?${qs}`, {

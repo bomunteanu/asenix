@@ -12,6 +12,7 @@ pub struct Atom {
     pub atom_id: String,
     pub atom_type: String,
     pub domain: String,
+    pub project_id: Option<String>,
     pub statement: String,
     pub conditions: serde_json::Value,
     pub metrics: Option<serde_json::Value>,
@@ -67,8 +68,30 @@ pub struct SearchAtomsInput {
     pub r#type: Option<String>,
     pub lifecycle: Option<String>,
     pub query: Option<String>,
+    pub project_id: Option<String>,
     pub limit: Option<i64>,
     pub offset: Option<i64>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct Project {
+    pub project_id: String,
+    pub name: String,
+    pub slug: String,
+    pub description: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ListProjectsResponse {
+    pub projects: Vec<Project>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateProjectInput {
+    pub name: String,
+    pub slug: String,
+    pub description: Option<String>,
 }
 
 // rspc-style request wrapper
@@ -84,6 +107,26 @@ pub struct RspcResponse<T> {
     pub result: T,
 }
 
+fn domain_atom_to_rspc(a: crate::domain::atom::Atom) -> Atom {
+    Atom {
+        atom_id: a.atom_id,
+        atom_type: a.atom_type.to_string(),
+        domain: a.domain,
+        project_id: a.project_id,
+        statement: a.statement,
+        conditions: a.conditions,
+        metrics: a.metrics,
+        lifecycle: a.lifecycle.to_string(),
+        ph_attraction: a.ph_attraction,
+        ph_repulsion: a.ph_repulsion,
+        ph_novelty: a.ph_novelty,
+        ph_disagreement: a.ph_disagreement,
+        ban_flag: a.ban_flag,
+        retracted: a.retracted,
+        created_at: a.created_at.to_rfc3339(),
+    }
+}
+
 pub async fn handle_rspc_request(
     State(state): State<Arc<AppState>>,
     Json(request): Json<RspcRequest<serde_json::Value>>,
@@ -97,87 +140,66 @@ pub async fn handle_rspc_request(
             Ok(Json(serde_json::to_value(RspcResponse { result: response }).unwrap()))
         }
         "searchAtoms" => {
-            // Parse parameters (same structure as /rpc endpoint)
             let params = request.params.unwrap_or(serde_json::json!({}));
-            
+
             let domain_filter: Option<String> = serde_json::from_value(params["domain"].clone()).ok();
             let type_filter: Option<String> = serde_json::from_value(params["type"].clone()).ok();
             let lifecycle_filter: Option<String> = serde_json::from_value(params["lifecycle"].clone()).ok();
             let text_search: Option<String> = serde_json::from_value(params["query"].clone()).ok();
+            let project_id_filter: Option<String> = serde_json::from_value(params["project_id"].clone()).ok();
             let limit: i64 = serde_json::from_value(params["limit"].clone()).unwrap_or(50);
             let offset: i64 = serde_json::from_value(params["offset"].clone()).unwrap_or(0);
 
-            // Count total matching atoms (ignores limit/offset)
-            let total: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM atoms WHERE NOT retracted AND NOT archived"
-            )
-            .fetch_one(&state.pool)
-            .await
-            .unwrap_or(0);
+            // Count total matching atoms (respects project filter)
+            let total: i64 = if let Some(ref pid) = project_id_filter {
+                sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM atoms WHERE NOT retracted AND NOT archived AND project_id = $1"
+                )
+                .bind(pid)
+                .fetch_one(&state.pool)
+                .await
+                .unwrap_or(0)
+            } else {
+                sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM atoms WHERE NOT retracted AND NOT archived"
+                )
+                .fetch_one(&state.pool)
+                .await
+                .unwrap_or(0)
+            };
 
-            // Call real database function (same as /rpc endpoint)
             let atoms = crate::db::queries::search_atoms(
                 &state.pool,
                 domain_filter.as_deref(),
                 type_filter.as_deref(),
                 lifecycle_filter.as_deref(),
                 text_search.as_deref(),
+                project_id_filter.as_deref(),
                 limit,
                 offset,
             ).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-            // Convert database results to rspc format
-            let atoms: Vec<Atom> = atoms.into_iter().map(|a| Atom {
-                atom_id: a.atom_id,
-                atom_type: a.atom_type.to_string(),
-                domain: a.domain,
-                statement: a.statement,
-                conditions: a.conditions,
-                metrics: a.metrics,
-                lifecycle: a.lifecycle.to_string(),
-                ph_attraction: a.ph_attraction,
-                ph_repulsion: a.ph_repulsion,
-                ph_novelty: a.ph_novelty,
-                ph_disagreement: a.ph_disagreement,
-                ban_flag: a.ban_flag,
-                retracted: a.retracted,
-                created_at: a.created_at.to_rfc3339(),
-            }).collect();
-
+            let atoms: Vec<Atom> = atoms.into_iter().map(domain_atom_to_rspc).collect();
             let response = SearchAtomsResponse { atoms, total };
             Ok(Json(serde_json::to_value(RspcResponse { result: response }).unwrap()))
         }
         "getGraph" => {
-            // Get all atoms
+            let params = request.params.clone().unwrap_or(serde_json::json!({}));
+            let project_id_filter: Option<String> = serde_json::from_value(params["project_id"].clone()).ok();
+
             let atoms = crate::db::queries::search_atoms(
                 &state.pool,
                 None,
                 None,
                 None,
                 None,
-                1000, // Get all atoms
+                project_id_filter.as_deref(),
+                1000,
                 0,
             ).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-            // Convert database results to rspc format
-            let atoms: Vec<Atom> = atoms.into_iter().map(|a| Atom {
-                atom_id: a.atom_id,
-                atom_type: a.atom_type.to_string(),
-                domain: a.domain,
-                statement: a.statement,
-                conditions: a.conditions,
-                metrics: a.metrics,
-                lifecycle: a.lifecycle.to_string(),
-                ph_attraction: a.ph_attraction,
-                ph_repulsion: a.ph_repulsion,
-                ph_novelty: a.ph_novelty,
-                ph_disagreement: a.ph_disagreement,
-                ban_flag: a.ban_flag,
-                retracted: a.retracted,
-                created_at: a.created_at.to_rfc3339(),
-            }).collect();
+            let atoms: Vec<Atom> = atoms.into_iter().map(domain_atom_to_rspc).collect();
 
-            // Get edges using existing RPC handler
             let edges_result = crate::api::rpc_handlers::rpc_backup::handle_get_graph_edges(&state).await
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
@@ -198,29 +220,23 @@ pub async fn handle_rspc_request(
             Ok(Json(serde_json::to_value(RspcResponse { result: response }).unwrap()))
         }
         "getGraphWithEmbeddings" => {
-            // Fetch atoms (same as getGraph)
+            let params = request.params.clone().unwrap_or(serde_json::json!({}));
+            let project_id_filter: Option<String> = serde_json::from_value(params["project_id"].clone()).ok();
+
             let atoms = crate::db::queries::search_atoms(
-                &state.pool, None, None, None, None, 1000, 0,
+                &state.pool,
+                None,
+                None,
+                None,
+                None,
+                project_id_filter.as_deref(),
+                1000,
+                0,
             ).await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-            let atoms: Vec<Atom> = atoms.into_iter().map(|a| Atom {
-                atom_id: a.atom_id,
-                atom_type: a.atom_type.to_string(),
-                domain: a.domain,
-                statement: a.statement,
-                conditions: a.conditions,
-                metrics: a.metrics,
-                lifecycle: a.lifecycle.to_string(),
-                ph_attraction: a.ph_attraction,
-                ph_repulsion: a.ph_repulsion,
-                ph_novelty: a.ph_novelty,
-                ph_disagreement: a.ph_disagreement,
-                ban_flag: a.ban_flag,
-                retracted: a.retracted,
-                created_at: a.created_at.to_rfc3339(),
-            }).collect();
+            let atom_ids: Vec<String> = atoms.iter().map(|a| a.atom_id.clone()).collect();
+            let atoms: Vec<Atom> = atoms.into_iter().map(domain_atom_to_rspc).collect();
 
-            // Fetch edges
             let edges_result = crate::api::rpc_handlers::rpc_backup::handle_get_graph_edges(&state).await
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
             let edges_data = edges_result.get("edges").and_then(|e| e.as_array())
@@ -235,15 +251,21 @@ pub async fn handle_rspc_request(
                 })
             }).collect();
 
-            // Fetch embeddings for all ready atoms in one query (cast vector → float4[])
-            let emb_rows = sqlx::query(
-                "SELECT atom_id, embedding::float4[] AS emb \
-                 FROM atoms \
-                 WHERE embedding_status = 'ready' AND NOT retracted AND NOT archived"
-            )
-            .fetch_all(&state.pool)
-            .await
-            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+            // Fetch embeddings — scoped to the atom_ids already filtered by project
+            let emb_rows = if atom_ids.is_empty() {
+                vec![]
+            } else {
+                sqlx::query(
+                    "SELECT atom_id, embedding::float4[] AS emb \
+                     FROM atoms \
+                     WHERE embedding_status = 'ready' AND NOT retracted AND NOT archived \
+                     AND atom_id = ANY($1)"
+                )
+                .bind(&atom_ids)
+                .fetch_all(&state.pool)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+            };
 
             let mut embeddings: std::collections::HashMap<String, Vec<f32>> =
                 std::collections::HashMap::new();
@@ -256,6 +278,106 @@ pub async fn handle_rspc_request(
 
             let response = GraphWithEmbeddingsResponse { atoms, edges, embeddings };
             Ok(Json(serde_json::to_value(RspcResponse { result: response }).unwrap()))
+        }
+        "listProjects" => {
+            let projects = crate::db::queries::list_projects(&state.pool)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+            let projects: Vec<Project> = projects.into_iter().map(|p| Project {
+                project_id: p.project_id,
+                name: p.name,
+                slug: p.slug,
+                description: p.description,
+                created_at: p.created_at.to_rfc3339(),
+            }).collect();
+
+            let response = ListProjectsResponse { projects };
+            Ok(Json(serde_json::to_value(RspcResponse { result: response }).unwrap()))
+        }
+        "getProject" => {
+            let params = request.params.unwrap_or(serde_json::json!({}));
+            let project_id: String = serde_json::from_value(params["project_id"].clone())
+                .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+            let p = crate::db::queries::get_project(&state.pool, &project_id)
+                .await
+                .map_err(|_| StatusCode::NOT_FOUND)?;
+
+            let project = Project {
+                project_id: p.project_id,
+                name: p.name,
+                slug: p.slug,
+                description: p.description,
+                created_at: p.created_at.to_rfc3339(),
+            };
+            Ok(Json(serde_json::to_value(RspcResponse { result: project }).unwrap()))
+        }
+        "createProject" => {
+            let params = request.params.unwrap_or(serde_json::json!({}));
+            let name: String = serde_json::from_value(params["name"].clone())
+                .map_err(|_| StatusCode::BAD_REQUEST)?;
+            let slug: String = serde_json::from_value(params["slug"].clone())
+                .map_err(|_| StatusCode::BAD_REQUEST)?;
+            let description: Option<String> = serde_json::from_value(params["description"].clone()).ok();
+
+            let p = crate::db::queries::create_project(
+                &state.pool,
+                &name,
+                &slug,
+                description.as_deref(),
+            )
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+            let project = Project {
+                project_id: p.project_id,
+                name: p.name,
+                slug: p.slug,
+                description: p.description,
+                created_at: p.created_at.to_rfc3339(),
+            };
+            Ok(Json(serde_json::to_value(RspcResponse { result: project }).unwrap()))
+        }
+        "updateProject" => {
+            let params = request.params.unwrap_or(serde_json::json!({}));
+            let project_id: String = serde_json::from_value(params["project_id"].clone())
+                .map_err(|_| StatusCode::BAD_REQUEST)?;
+            let name: String = serde_json::from_value(params["name"].clone())
+                .map_err(|_| StatusCode::BAD_REQUEST)?;
+            let slug: String = serde_json::from_value(params["slug"].clone())
+                .map_err(|_| StatusCode::BAD_REQUEST)?;
+            let description: Option<String> = serde_json::from_value(params["description"].clone()).ok();
+
+            let p = crate::db::queries::update_project(
+                &state.pool,
+                &project_id,
+                &name,
+                &slug,
+                description.as_deref(),
+            )
+            .await
+            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+            let project = Project {
+                project_id: p.project_id,
+                name: p.name,
+                slug: p.slug,
+                description: p.description,
+                created_at: p.created_at.to_rfc3339(),
+            };
+            Ok(Json(serde_json::to_value(RspcResponse { result: project }).unwrap()))
+        }
+        "deleteProject" => {
+            let params = request.params.unwrap_or(serde_json::json!({}));
+            let project_id: String = serde_json::from_value(params["project_id"].clone())
+                .map_err(|_| StatusCode::BAD_REQUEST)?;
+
+            crate::db::queries::delete_project(&state.pool, &project_id)
+                .await
+                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+            Ok(Json(serde_json::to_value(RspcResponse { result: serde_json::json!({ "status": "deleted" }) }).unwrap()))
         }
         "publish_atoms" => {
             let result = crate::api::rpc_handlers::rpc_backup::handle_publish_atoms(

@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { jsonRpcClient } from '#/lib/json-rpc-client'
+import { useActiveProject } from '#/stores/active-project'
 import { Card, CardContent, CardHeader, CardTitle } from '#/components/ui/card'
 import { Trash2, HelpCircle, X as XIcon, Plus } from 'lucide-react'
 
@@ -25,6 +26,7 @@ const emptyCondition = (): ConditionRow => ({ key: '', mode: 'free', value: '' }
 const emptyMetric = (): MetricRow => ({ name: '', direction: 'maximize', unit: '' })
 
 function BountiesComponent() {
+  const { activeProject } = useActiveProject()
   const [statement, setStatement] = useState('')
   const [domain, setDomain] = useState('')
   const [conditions, setConditions] = useState<ConditionRow[]>([emptyCondition()])
@@ -76,8 +78,8 @@ function BountiesComponent() {
   }, [])
 
   const { data: bountyData, isLoading: bountiesLoading } = useQuery({
-    queryKey: ['bounties'],
-    queryFn: () => jsonRpcClient.searchAtoms({ type: 'bounty', limit: 50 }),
+    queryKey: ['bounties', activeProject?.project_id],
+    queryFn: () => jsonRpcClient.searchAtoms({ type: 'bounty', limit: 50, project_id: activeProject?.project_id }),
     refetchInterval: 30000,
   })
 
@@ -113,6 +115,7 @@ function BountiesComponent() {
           atom_type: 'bounty',
           statement: statement.trim(),
           domain: domain.trim(),
+          project_id: activeProject?.project_id,
           conditions: conditionsObj,
           metrics: metricsArr,
         }],

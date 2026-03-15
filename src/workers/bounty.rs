@@ -122,6 +122,7 @@ impl BountyWorker {
             let atom_input = crate::domain::atom::AtomInput {
                 atom_type: crate::domain::atom::AtomType::Bounty,
                 domain: domain.clone(),
+                project_id: None,
                 statement: format!(
                     "Sparse region near atom {}: explore this area to expand knowledge coverage in domain '{}'.",
                     nearest_atom_id, domain

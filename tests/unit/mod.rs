@@ -2,6 +2,7 @@
 
 // mod acceptance_rules; // Temporarily disabled due to compilation errors
 mod acceptance_rules_working;
+mod project_tests;
 mod atom_id_tests;
 mod crypto_tests;
 mod pheromone_math;

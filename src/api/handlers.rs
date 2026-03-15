@@ -136,6 +136,7 @@ pub struct ReviewQuery {
     pub limit: Option<i64>,
     pub offset: Option<i64>,
     pub domain: Option<String>,
+    pub project_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -173,14 +174,15 @@ pub async fn get_review_queue(
     let limit = query.limit.unwrap_or(50);
     let offset = query.offset.unwrap_or(0);
     let domain_filter = query.domain.as_deref();
-    
+    let project_id_filter = query.project_id.as_deref();
+
     // Get actual review queue items
-    let review_items = crate::db::queries::get_review_queue(&state.pool, limit, offset, domain_filter)
+    let review_items = crate::db::queries::get_review_queue(&state.pool, limit, offset, domain_filter, project_id_filter)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-    
+
     // Get total count for pagination
-    let total = crate::db::queries::get_review_queue_count(&state.pool, domain_filter)
+    let total = crate::db::queries::get_review_queue_count(&state.pool, domain_filter, project_id_filter)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
 

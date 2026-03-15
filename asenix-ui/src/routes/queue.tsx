@@ -2,6 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useState } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { jsonRpcClient } from '#/lib/json-rpc-client'
+import { useActiveProject } from '#/stores/active-project'
 import { Card, CardContent, CardHeader, CardTitle } from '#/components/ui/card'
 import { ChevronDown, ChevronRight, Check, X, AlertTriangle, HelpCircle } from 'lucide-react'
 
@@ -43,18 +44,19 @@ function QueueComponent() {
   const [showHelp, setShowHelp] = useState(false)
   const [atomOutcomes, setAtomOutcomes] = useState<Record<string, 'approved' | 'rejected'>>({})
 
+  const { activeProject } = useActiveProject()
   const queryClient = useQueryClient()
 
   // Use the dedicated /review endpoint — returns atoms with review_status='pending'
   const { data: reviewData, isLoading: reviewLoading } = useQuery({
-    queryKey: ['reviewQueue'],
-    queryFn: () => jsonRpcClient.getReviewQueue({ limit: 50 }),
+    queryKey: ['reviewQueue', activeProject?.project_id],
+    queryFn: () => jsonRpcClient.getReviewQueue({ limit: 50, project_id: activeProject?.project_id }),
     refetchInterval: 30000,
   })
 
   const { data: contestedData, isLoading: contestedLoading } = useQuery({
-    queryKey: ['contestedAtoms'],
-    queryFn: () => jsonRpcClient.searchAtoms({ lifecycle: 'contested', limit: 50 }),
+    queryKey: ['contestedAtoms', activeProject?.project_id],
+    queryFn: () => jsonRpcClient.searchAtoms({ lifecycle: 'contested', limit: 50, project_id: activeProject?.project_id }),
     refetchInterval: 30000,
   })
 

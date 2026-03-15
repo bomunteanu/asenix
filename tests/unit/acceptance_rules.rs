@@ -84,6 +84,7 @@ fn create_test_atom_input() -> AtomInput {
     AtomInput {
         atom_type: AtomType::Finding,
         domain: "physics".to_string(),
+        project_id: None,
         statement: "Test measurement result".to_string(),
         conditions: json!({
             "temperature": 25.0,
@@ -393,6 +394,7 @@ async fn test_edge_case_empty_atom() {
     let atom = AtomInput {
         atom_type: AtomType::Finding,
         domain: "".to_string(),
+        project_id: None,
         statement: "".to_string(),
         conditions: json!({}),
         metrics: None,

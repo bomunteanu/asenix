@@ -286,11 +286,14 @@ pub fn create_test_atom_input(
     AtomInput {
         atom_type,
         domain: domain.to_string(),
+        project_id: None,
         statement: statement.to_string(),
         conditions,
         metrics: None,
         provenance,
         signature: vec![], // Will be filled during signing
+        artifact_tree_hash: None,
+        artifact_inline: None,
     }
 }
 
@@ -605,6 +608,7 @@ pub fn make_atom_input(
     AtomInput {
         atom_type: atom_type.unwrap_or(AtomType::Finding),
         domain: "test".to_string(),
+        project_id: None,
         statement: statement.unwrap_or("Test statement").to_string(),
         conditions: conditions.unwrap_or_else(|| json!({})),
         metrics,
@@ -614,6 +618,8 @@ pub fn make_atom_input(
             "confidence": 0.5
         })),
         signature: vec![], // Will be filled during signing
+        artifact_tree_hash: None,
+        artifact_inline: None,
     }
 }
 

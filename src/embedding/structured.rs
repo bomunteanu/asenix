@@ -178,6 +178,7 @@ mod tests {
             atom_id: "test_atom".to_string(),
             atom_type: AtomType::Finding,
             domain: "test".to_string(),
+            project_id: None,
             statement: "Test statement".to_string(),
             conditions: conditions.clone(),
             metrics: None,

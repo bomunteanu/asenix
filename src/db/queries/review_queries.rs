@@ -19,37 +19,34 @@ pub async fn get_review_queue(
     limit: i64,
     offset: i64,
     domain_filter: Option<&str>,
+    project_id_filter: Option<&str>,
 ) -> Result<Vec<ReviewQueueItem>> {
-    let query = if let Some(domain) = domain_filter {
-        sqlx::query(
-            "SELECT a.atom_id, a.type, a.domain, a.statement, a.author_agent_id, a.created_at, a.review_status,
+    let mut query_str = "SELECT a.atom_id, a.type, a.domain, a.statement, a.author_agent_id, a.created_at, a.review_status,
                     CASE WHEN ag.reliability >= 0.8 AND ag.atoms_published >= 5 THEN true ELSE false END as auto_review_eligible
              FROM atoms a
              JOIN agents ag ON a.author_agent_id = ag.agent_id
-             WHERE a.review_status = 'pending' AND a.domain = $1
-             ORDER BY a.created_at DESC
-             LIMIT $2 OFFSET $3"
-        )
-        .bind(domain)
-        .bind(limit)
-        .bind(offset)
-    } else {
-        sqlx::query(
-            "SELECT a.atom_id, a.type, a.domain, a.statement, a.author_agent_id, a.created_at, a.review_status,
-                    CASE WHEN ag.reliability >= 0.8 AND ag.atoms_published >= 5 THEN true ELSE false END as auto_review_eligible
-             FROM atoms a
-             JOIN agents ag ON a.author_agent_id = ag.agent_id
-             WHERE a.review_status = 'pending'
-             ORDER BY a.created_at DESC
-             LIMIT $1 OFFSET $2"
-        )
-        .bind(limit)
-        .bind(offset)
-    };
+             WHERE a.review_status = 'pending'".to_string();
+    let mut bind_count = 0usize;
 
-    let rows = query
-        .fetch_all(pool)
-        .await?;
+    if domain_filter.is_some() {
+        bind_count += 1;
+        query_str.push_str(&format!(" AND a.domain = ${}", bind_count));
+    }
+    if project_id_filter.is_some() {
+        bind_count += 1;
+        query_str.push_str(&format!(" AND a.project_id = ${}", bind_count));
+    }
+    bind_count += 1;
+    query_str.push_str(&format!(" ORDER BY a.created_at DESC LIMIT ${}", bind_count));
+    bind_count += 1;
+    query_str.push_str(&format!(" OFFSET ${}", bind_count));
+
+    let mut q = sqlx::query(&query_str);
+    if let Some(d) = domain_filter { q = q.bind(d); }
+    if let Some(p) = project_id_filter { q = q.bind(p); }
+    q = q.bind(limit).bind(offset);
+
+    let rows = q.fetch_all(pool).await?;
 
     rows.into_iter()
         .map(|row| {
@@ -71,27 +68,25 @@ pub async fn get_review_queue(
 pub async fn get_review_queue_count(
     pool: &PgPool,
     domain_filter: Option<&str>,
+    project_id_filter: Option<&str>,
 ) -> Result<i64> {
-    let count: i64 = if let Some(domain) = domain_filter {
-        sqlx::query_scalar(
-            "SELECT COUNT(*) 
-             FROM atoms a
-             WHERE a.review_status = 'pending' AND a.domain = $1"
-        )
-        .bind(domain)
-        .fetch_one(pool)
-        .await?
-    } else {
-        sqlx::query_scalar(
-            "SELECT COUNT(*) 
-             FROM atoms a
-             WHERE a.review_status = 'pending'"
-        )
-        .fetch_one(pool)
-        .await?
-    };
-    
-    Ok(count)
+    let mut query_str = "SELECT COUNT(*) FROM atoms a WHERE a.review_status = 'pending'".to_string();
+    let mut bind_count = 0usize;
+
+    if domain_filter.is_some() {
+        bind_count += 1;
+        query_str.push_str(&format!(" AND a.domain = ${}", bind_count));
+    }
+    if project_id_filter.is_some() {
+        bind_count += 1;
+        query_str.push_str(&format!(" AND a.project_id = ${}", bind_count));
+    }
+
+    let mut q = sqlx::query_scalar(&query_str);
+    if let Some(d) = domain_filter { q = q.bind(d); }
+    if let Some(p) = project_id_filter { q = q.bind(p); }
+
+    Ok(q.fetch_one(pool).await?)
 }
 
 #[derive(Debug)]

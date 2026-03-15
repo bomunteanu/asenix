@@ -4,5 +4,6 @@ pub mod condition;
 pub mod edge;
 pub mod lifecycle;
 pub mod pheromone;
+pub mod project;
 pub mod synthesis;
 pub mod trust;

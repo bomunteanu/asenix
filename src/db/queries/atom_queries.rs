@@ -44,17 +44,18 @@ pub async fn publish_atom(
     let mut tx = pool.begin().await.map_err(MoteError::Database)?;
     
     sqlx::query(
-        "INSERT INTO atoms (atom_id, type, domain, statement, conditions, metrics, provenance, signature, author_agent_id, created_at, embedding_status, lifecycle, retracted, artifact_tree_hash, review_status)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), 'pending', 'provisional', false, $10,
+        "INSERT INTO atoms (atom_id, type, domain, project_id, statement, conditions, metrics, provenance, signature, author_agent_id, created_at, embedding_status, lifecycle, retracted, artifact_tree_hash, review_status)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW(), 'pending', 'provisional', false, $11,
            CASE WHEN EXISTS(
              SELECT 1 FROM agents
-             WHERE agent_id = $9 AND reliability >= 0.8 AND atoms_published >= 5
+             WHERE agent_id = $10 AND reliability >= 0.8 AND atoms_published >= 5
            ) THEN 'auto_approved' ELSE 'pending' END
          )"
     )
     .bind(&atom_id)
     .bind(atom_input.atom_type.to_string())
     .bind(&atom_input.domain)
+    .bind(&atom_input.project_id)
     .bind(&atom_input.statement)
     .bind(&atom_input.conditions)
     .bind(&atom_input.metrics)
@@ -99,6 +100,7 @@ pub async fn search_atoms(
     type_filter: Option<&str>,
     lifecycle_filter: Option<&str>,
     text_search: Option<&str>,
+    project_id_filter: Option<&str>,
     limit: i64,
     offset: i64,
 ) -> Result<Vec<Atom>> {
@@ -125,6 +127,11 @@ pub async fn search_atoms(
         query.push_str(&format!(" AND statement ILIKE ${}", bind_count));
     }
 
+    if let Some(_project_id) = project_id_filter {
+        bind_count += 1;
+        query.push_str(&format!(" AND project_id = ${}", bind_count));
+    }
+
     query.push_str(" ORDER BY created_at DESC");
     query.push_str(&format!(" LIMIT {} OFFSET {}", limit, offset));
 
@@ -141,6 +148,9 @@ pub async fn search_atoms(
     }
     if let Some(text) = text_search {
         query_builder = query_builder.bind(format!("%{}%", text));
+    }
+    if let Some(project_id) = project_id_filter {
+        query_builder = query_builder.bind(project_id);
     }
 
     let rows = query_builder.fetch_all(pool).await?;
@@ -179,6 +189,7 @@ pub async fn search_atoms(
             atom_id: row.get("atom_id"),
             atom_type,
             domain: row.get("domain"),
+            project_id: row.get("project_id"),
             statement: row.get("statement"),
             conditions: row.get("conditions"),
             metrics: row.get("metrics"),
@@ -261,6 +272,7 @@ pub async fn get_synthesis_atoms(
             atom_id: row.get("atom_id"),
             atom_type,
             domain: row.get("domain"),
+            project_id: row.get("project_id"),
             statement: row.get("statement"),
             conditions: row.get("conditions"),
             metrics: row.get("metrics"),
@@ -369,6 +381,7 @@ pub fn atom_from_row(row: sqlx::postgres::PgRow) -> Result<Atom> {
         atom_id: row.get("atom_id"),
         atom_type,
         domain: row.get("domain"),
+        project_id: row.get("project_id"),
         statement: row.get("statement"),
         conditions: row.get("conditions"),
         metrics: row.get("metrics"),
