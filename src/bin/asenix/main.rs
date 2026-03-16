@@ -612,22 +612,35 @@ fn cmd_agent_run(hub: &str, project_slug: &str, n: usize) -> Result<()> {
         display::truncate(&first_cred.agent_id, 20)
     ));
 
-    let atom_count = get_project_atom_count(&api_client, &project.project_id);
+    let atom_count = get_project_atom_count(&api_client, &project.project_id, &first_cred);
     if atom_count == 0 {
         match api_client.get_seed_bounty(&project.project_id) {
             Ok(Some(bounty)) => {
                 display::progress("No atoms found — posting seed bounty from hub...");
-                let mut atom = bounty.clone();
-                if let Some(obj) = atom.as_object_mut() {
-                    if !obj.contains_key("atom_type") {
-                        obj.insert("atom_type".into(), "bounty".into());
-                    }
-                    obj.insert("project_id".into(), project.project_id.as_str().into());
-                }
+                // The stored bounty may be wrapped as {"atoms": [...]} or be a bare atom object.
+                // Normalise to a flat Vec of atom objects, injecting project_id into each.
+                let raw_atoms: Vec<serde_json::Value> =
+                    if let Some(arr) = bounty.get("atoms").and_then(|v| v.as_array()) {
+                        arr.clone()
+                    } else {
+                        vec![bounty.clone()]
+                    };
+                let atoms: Vec<serde_json::Value> = raw_atoms
+                    .into_iter()
+                    .map(|mut a| {
+                        if let Some(obj) = a.as_object_mut() {
+                            if !obj.contains_key("atom_type") {
+                                obj.insert("atom_type".into(), "bounty".into());
+                            }
+                            obj.insert("project_id".into(), project.project_id.as_str().into());
+                        }
+                        a
+                    })
+                    .collect();
                 let payload = serde_json::json!({
                     "agent_id": first_cred.agent_id,
                     "api_token": first_cred.api_token,
-                    "atoms": [atom]
+                    "atoms": atoms
                 });
                 match api_client.mcp_call("publish_atoms", payload) {
                     Ok(result) => {
@@ -739,13 +752,15 @@ fn cmd_agent_run(hub: &str, project_slug: &str, n: usize) -> Result<()> {
             )
         } else {
             format!(
-                "Your credentials: AGENT_ID={agent_id} API_TOKEN={api_token}\n\
+                "Your credentials: AGENT_ID={agent_id} API_TOKEN={api_token} PROJECT_ID={project_id}\n\
                  Working directory: {workdir}\n\
                  The MCP server \"asenix\" is configured — use it for all hub calls.\n\
+                 IMPORTANT: Every atom you publish must include \"project_id\": \"{project_id}\" — this is mandatory.\n\
                  Follow all instructions in the document below exactly.\n\n\
                  {claude_md}",
                 agent_id = cred.agent_id,
                 api_token = cred.api_token,
+                project_id = project.project_id,
                 workdir = workdir.display(),
                 claude_md = claude_md,
             )
@@ -761,7 +776,7 @@ fn cmd_agent_run(hub: &str, project_slug: &str, n: usize) -> Result<()> {
             ));
             display::hint(&format!("Log: {}", log_path.display()));
 
-            let atoms_before = get_project_atom_count(&api_client, &project.project_id);
+            let atoms_before = get_project_atom_count(&api_client, &project.project_id, cred);
 
             let log_file = std::fs::File::create(&log_path)?;
 
@@ -770,12 +785,14 @@ fn cmd_agent_run(hub: &str, project_slug: &str, n: usize) -> Result<()> {
                 "--dangerously-skip-permissions",
                 "--output-format",
                 "stream-json",
+                "--verbose",
                 "--mcp-config",
                 mcp_config_path.to_str().unwrap_or(""),
                 "-p",
                 &prompt,
             ])
             .current_dir(&workdir)
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
 
@@ -849,7 +866,7 @@ fn cmd_agent_run(hub: &str, project_slug: &str, n: usize) -> Result<()> {
 
             // Post-run summary.
             println!();
-            let atoms_after = get_project_atom_count(&api_client, &project.project_id);
+            let atoms_after = get_project_atom_count(&api_client, &project.project_id, cred);
             let new_atoms = atoms_after.saturating_sub(atoms_before);
             if new_atoms > 0 {
                 display::success(&format!("{} new atom(s) published to hub", new_atoms));
@@ -963,10 +980,19 @@ fn register_one_agent(
 }
 
 /// Returns the number of atoms currently in a project (0 on any error).
-fn get_project_atom_count(api_client: &client::AsenixClient, project_id: &str) -> usize {
+fn get_project_atom_count(
+    api_client: &client::AsenixClient,
+    project_id: &str,
+    cred: &config::AgentCred,
+) -> usize {
     match api_client.mcp_call(
         "search_atoms",
-        serde_json::json!({ "project_id": project_id, "limit": 10000 }),
+        serde_json::json!({
+            "agent_id": cred.agent_id,
+            "api_token": cred.api_token,
+            "project_id": project_id,
+            "limit": 10000,
+        }),
     ) {
         Ok(result) => result["atoms"]
             .as_array()
@@ -999,8 +1025,46 @@ fn print_stream_event(line: &str) {
         }
         Some("tool_use") => {
             let name = v["name"].as_str().unwrap_or("?");
-            let short = name.strip_prefix("mcp__asenix__").unwrap_or(name);
-            println!("  {} {}", "→".cyan(), short);
+            let input = &v["input"];
+            if name == "Bash" || name == "bash" || name.ends_with("__bash") {
+                // Show the command being run
+                if let Some(cmd) = input["command"].as_str() {
+                    let cmd_short = cmd.lines().next().unwrap_or(cmd);
+                    let truncated = if cmd_short.len() > 120 {
+                        format!("{}…", &cmd_short[..120])
+                    } else {
+                        cmd_short.to_string()
+                    };
+                    println!("  {} $ {}", "→".cyan(), truncated);
+                } else {
+                    println!("  {} Bash", "→".cyan());
+                }
+            } else if name.contains("Read") || name.contains("Write") || name.contains("Edit") || name.contains("Glob") || name.contains("Grep") {
+                // File operations — show the path
+                let path = input["file_path"]
+                    .as_str()
+                    .or_else(|| input["pattern"].as_str())
+                    .or_else(|| input["path"].as_str())
+                    .unwrap_or("?");
+                let short = name.split("__").last().unwrap_or(name);
+                println!("  {} {} {}", "→".cyan(), short, path);
+            } else {
+                // MCP / other tools — show tool name and key fields
+                let short = name.strip_prefix("mcp__asenix__").unwrap_or(name);
+                // Print a one-line summary of the most useful input field
+                let detail = if let Some(stmt) = input["statement"].as_str() {
+                    format!(": \"{}\"", &stmt[..stmt.len().min(80)])
+                } else if let Some(q) = input["query"].as_str() {
+                    format!(": \"{}\"", &q[..q.len().min(80)])
+                } else if let Some(h) = input["hypothesis"].as_str() {
+                    format!(": \"{}\"", &h[..h.len().min(80)])
+                } else if let Some(d) = input["domain"].as_str() {
+                    format!(" [{}]", d)
+                } else {
+                    String::new()
+                };
+                println!("  {} {}{}", "→".cyan(), short, detail);
+            }
         }
         Some("result") => {
             if let Some(cost) = v["total_cost_usd"].as_f64() {

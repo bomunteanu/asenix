@@ -69,14 +69,14 @@ pub async fn query_nearest_atom_with_density(
                   AND NOT retracted AND NOT archived
                   AND (embedding <=> $1) < $2
         )
-        SELECT 
-            na.atom_id, na.type, na.domain, na.statement, na.conditions, 
-            na.metrics, na.provenance, na.author_agent_id, na.created_at, 
-            na.signature, na.artifact_tree_hash, na.confidence, 
+        SELECT
+            na.atom_id, na.type, na.domain, na.project_id, na.statement, na.conditions,
+            na.metrics, na.provenance, na.author_agent_id, na.created_at,
+            na.signature, na.artifact_tree_hash, na.confidence,
             na.ph_attraction, na.ph_repulsion, na.ph_novelty, na.ph_disagreement,
-            na.embedding_status, na.repl_exact, na.repl_conceptual, 
-            na.repl_extension, na.traffic, na.lifecycle, na.retracted, 
-            na.retraction_reason, na.ban_flag, na.archived, na.probationary, 
+            na.embedding_status, na.repl_exact, na.repl_conceptual,
+            na.repl_extension, na.traffic, na.lifecycle, na.retracted,
+            na.retraction_reason, na.ban_flag, na.archived, na.probationary,
             na.summary, na.distance,
             ac.count as atom_count
         FROM nearest_atom na, atom_count ac
