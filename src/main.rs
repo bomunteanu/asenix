@@ -21,6 +21,7 @@ mod domain;
 mod embedding;
 mod error;
 mod state;
+mod metrics;
 mod workers;
 mod acceptance;
 mod storage;
@@ -62,34 +63,33 @@ async fn main() -> anyhow::Result<()> {
     sqlx::migrate!("./migrations").run(&pool).await?;
 
     // Create application state
-    let (embedding_queue_tx, _embedding_queue_rx) = tokio::sync::mpsc::channel(1000);
     let (sse_broadcast_tx, _) = tokio::sync::broadcast::channel(1000);
-    
+
     // Create storage backend
     let storage_path = std::path::PathBuf::from(&config.hub.artifact_storage_path);
     tokio::fs::create_dir_all(&storage_path).await
         .map_err(|e| anyhow::anyhow!("Failed to create storage directory: {}", e))?;
-    
-    let storage = Arc::new(crate::storage::LocalStorage::new(storage_path));
-    
-    // Initialize embedding provider (local ONNX or OpenAI API)
-    let embedding_provider = embedding::provider::EmbeddingProvider::from_env()?;
-    let provider_dim = embedding_provider.dimension();
-    let config_dim = config.hub.embedding_dimension;
-    if provider_dim != config_dim {
-        anyhow::bail!(
-            "Embedding dimension mismatch: provider '{}' produces {} dims but config.toml \
-             has embedding_dimension = {}. Update config.toml to match.",
-            embedding_provider.name(), provider_dim, config_dim
-        );
-    }
-    tracing::info!(
-        "Embedding provider '{}' ready — {} dimensions",
-        embedding_provider.name(), provider_dim
-    );
-    let embedding_provider = Arc::new(embedding_provider);
 
-    let state = state::AppState::new(pool, config.clone(), embedding_queue_tx.clone(), sse_broadcast_tx, storage)
+    let storage = Arc::new(crate::storage::LocalStorage::new(storage_path));
+
+    // Create embedding channel (immediate trigger on publish) and cancellation token
+    let (embedding_tx, embedding_rx) = tokio::sync::mpsc::channel::<String>(1000);
+    let cancel_token = tokio_util::sync::CancellationToken::new();
+
+    // Build HybridEncoder (semantic + structured)
+    let semantic_encoder = embedding::semantic::SemanticEncoder::new()?;
+    let structured_encoder = embedding::structured::StructuredEncoder::new(
+        Arc::new(crate::domain::condition::ConditionRegistry::new()),
+        config.hub.structured_vector_reserved_dims,
+        2,  // dims_per_numeric_key
+        4,  // dims_per_categorical_key
+    )?;
+    let hybrid_encoder = embedding::hybrid::HybridEncoder::new(semantic_encoder, structured_encoder)?;
+    let hybrid_dim = config.total_embedding_dimension();
+    tracing::info!("HybridEncoder ready — {} dimensions (semantic {} + structured {})",
+        hybrid_dim, config.hub.embedding_dimension, config.hub.structured_vector_reserved_dims);
+
+    let state = state::AppState::new(pool, config.clone(), sse_broadcast_tx, storage, embedding_tx)
         .await?;
 
     tracing::info!("rspc-style endpoint configured at /api/rspc");
@@ -100,16 +100,12 @@ async fn main() -> anyhow::Result<()> {
         (*state.config).clone(),
         state.graph_cache.clone(),
         state.condition_registry.clone(),
-        embedding_provider,
+        hybrid_encoder,
+        embedding_rx,
+        cancel_token.clone(),
     );
     
     let claims_worker = workers::claims::ClaimsExpiryWorker::new(state.pool.clone());
-    let staleness_worker = workers::staleness::StalenessWorker::new(
-        state.pool.clone(),
-        state.config.hub.neighbourhood_radius,
-        state.config.workers.bounty_needed_novelty_threshold,
-        state.sse_broadcast_tx.clone(),
-    );
     let bounty_worker = workers::bounty::BountyWorker::new(
         state.pool.clone(),
         state.config.workers.bounty_needed_novelty_threshold,
@@ -117,32 +113,49 @@ async fn main() -> anyhow::Result<()> {
         state.config.pheromone.exploration_density_radius,
         state.config.hub.embedding_dimension,
         state.config.workers.bounty_sparse_region_max_atoms,
+        state.config.hub.neighbourhood_radius,
     );
     let decay_worker = workers::decay::DecayWorker::new(
         state.pool.clone(),
         (*state.config).clone(),
     );
+    let lifecycle_worker = workers::lifecycle::LifecycleWorker::new(
+        state.pool.clone(),
+        crate::domain::lifecycle::LifecycleEvaluator::new(
+            state.config.pheromone.disagreement_threshold,
+        ),
+        cancel_token.clone(),
+        state.sse_broadcast_tx.clone(),
+        state.config.workers.lifecycle_check_interval_minutes,
+    );
 
-    // Spawn workers
-    let embedding_handle = tokio::spawn(async move {
-        embedding_worker.start().await;
+    // Spawn workers — all receive a clone of cancel_token for cooperative shutdown.
+    let bounty_interval = state.config.workers.staleness_check_interval_minutes;
+
+    let embedding_handle = tokio::spawn({
+        async move { embedding_worker.start().await }
     });
-    let _claims_handle = tokio::spawn(claims_worker.start());
-    let staleness_interval = state.config.workers.staleness_check_interval_minutes;
-    let _staleness_handle = tokio::spawn(staleness_worker.start(staleness_interval));
-    let _bounty_handle = tokio::spawn(bounty_worker.start(staleness_interval));
-    let decay_interval = state.config.workers.decay_interval_minutes;
-    let _decay_handle = tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(decay_interval * 60));
-        loop {
-            interval.tick().await;
-            match decay_worker.run_decay_sweep().await {
-                Ok(n) if n > 0 => tracing::info!("Decay sweep updated {} atoms", n),
-                Ok(_) => {}
-                Err(e) => tracing::error!("Decay sweep failed: {}", e),
-            }
-        }
+    let claims_handle = tokio::spawn({
+        let ct = cancel_token.clone();
+        async move { claims_worker.start(ct).await }
     });
+    let bounty_handle = tokio::spawn({
+        let ct = cancel_token.clone();
+        async move { bounty_worker.start(bounty_interval, ct).await }
+    });
+    let decay_handle = tokio::spawn({
+        let ct = cancel_token.clone();
+        async move { decay_worker.start(ct).await }
+    });
+    let lifecycle_handle = tokio::spawn(lifecycle_worker.start());
+
+    let metrics_collector = metrics::collector::MetricsCollector::new(
+        state.pool.clone(),
+        state.config.workers.metrics_collection_interval_seconds,
+        cancel_token.clone(),
+        state.config.workers.frontier_diversity_k,
+    );
+    let metrics_handle = tokio::spawn(async move { metrics_collector.start().await });
 
     // Spawn MCP session cleanup (every 5 minutes)
     let session_store_sweep = state.session_store.clone();
@@ -168,6 +181,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/review", get(api::handlers::get_review_queue))
         .route("/review/:id", post(api::handlers::review_atom))
         .route("/admin/trigger-bounty-tick", post(api::handlers::trigger_bounty_tick))
+        .route("/admin/export", get(api::handlers::export_data))
         // Project write endpoints
         .route("/projects", post(api::projects::create_project))
         .route("/projects/:project_id", axum::routing::delete(api::projects::delete_project))
@@ -230,8 +244,13 @@ async fn main() -> anyhow::Result<()> {
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
         .with_graceful_shutdown(shutdown_signal(
-            embedding_queue_tx,
+            cancel_token,
             embedding_handle,
+            claims_handle,
+            bounty_handle,
+            decay_handle,
+            lifecycle_handle,
+            metrics_handle,
         ))
         .await?;
 
@@ -240,8 +259,13 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn shutdown_signal(
-    embedding_queue_tx: tokio::sync::mpsc::Sender<String>,
-    mut embedding_handle: tokio::task::JoinHandle<()>,
+    cancel_token: tokio_util::sync::CancellationToken,
+    embedding_handle: tokio::task::JoinHandle<()>,
+    claims_handle: tokio::task::JoinHandle<()>,
+    bounty_handle: tokio::task::JoinHandle<()>,
+    decay_handle: tokio::task::JoinHandle<()>,
+    lifecycle_handle: tokio::task::JoinHandle<()>,
+    metrics_handle: tokio::task::JoinHandle<()>,
 ) {
     #[cfg(unix)]
     {
@@ -249,7 +273,7 @@ async fn shutdown_signal(
         let mut terminate = signal(SignalKind::terminate()).unwrap();
         let mut quit = signal(SignalKind::quit()).unwrap();
         let mut interrupt = signal(SignalKind::interrupt()).unwrap();
-        
+
         tokio::select! {
             _ = terminate.recv() => {},
             _ = quit.recv() => {},
@@ -264,29 +288,22 @@ async fn shutdown_signal(
     }
 
     tracing::info!("Shutdown signal received, starting graceful shutdown");
+    cancel_token.cancel();
 
-    // Step 1: Stop accepting new connections (handled by axum's graceful shutdown)
-    
-    // Step 2: Close embedding queue sender to stop processing new atoms
-    drop(embedding_queue_tx);
-    tracing::info!("Closed embedding queue sender");
+    tracing::info!("Waiting for all workers to finish (timeout 10s)...");
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let _ = tokio::join!(
+            embedding_handle,
+            claims_handle,
+            bounty_handle,
+            decay_handle,
+            lifecycle_handle,
+            metrics_handle,
+        );
+    })
+    .await
+    .ok();
 
-    // Step 3: Wait for embedding worker to finish with timeout
-    tracing::info!("Waiting for embedding worker to finish...");
-    match tokio::time::timeout(Duration::from_secs(30), &mut embedding_handle).await {
-        Ok(Ok(())) => tracing::info!("Embedding worker finished gracefully"),
-        Ok(Err(e)) => tracing::error!("Embedding worker panicked: {}", e),
-        Err(_) => {
-            tracing::warn!("Embedding worker did not finish within timeout");
-            // Force cancel
-            embedding_handle.abort();
-        }
-    }
-
-    // Step 4: Cancel background workers (they will be cleaned up automatically)
-    tracing::info!("Background workers will be cleaned up automatically");
-
-    // Step 5: Close database pool (handled by Drop implementation)
     tracing::info!("Graceful shutdown sequence completed");
 }
 

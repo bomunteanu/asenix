@@ -70,21 +70,22 @@ pub fn disagreement(contradicts_edges: usize, total_edges: usize) -> f64 {
     }
 }
 
-/// Apply exponential decay to attraction
-/// Returns decayed value or 0.0 if below floor threshold
+/// Apply exponential decay to attraction.
+/// `elapsed` and `half_life` are in the same unit (atoms published in the domain).
+/// Returns decayed value or 0.0 if below floor threshold.
 pub fn decay_attraction(
     current_attraction: f64,
-    hours_elapsed: f64,
-    half_life_hours: f64,
+    atoms_elapsed: f64,
+    half_life_atoms: f64,
     floor_threshold: f64,
 ) -> f64 {
     if current_attraction <= floor_threshold {
         return 0.0;
     }
-    
-    let decay_factor = (-2.0_f64.ln() / half_life_hours) * hours_elapsed;
+
+    let decay_factor = (-2.0_f64.ln() / half_life_atoms) * atoms_elapsed;
     let decayed = current_attraction * decay_factor.exp();
-    
+
     if decayed < floor_threshold {
         0.0
     } else {
@@ -249,25 +250,25 @@ mod tests {
 
     #[test]
     fn test_decay_attraction() {
-        let half_life = 168.0; // 1 week
-        
-        // No decay
+        let half_life = 50.0; // 50 atoms published = one half-life
+
+        // No activity → no decay
         let result = decay_attraction(10.0, 0.0, half_life, 0.001);
         assert_eq!(result, 10.0);
-        
-        // Half decay after half-life
+
+        // Exactly one half-life of domain activity → halved
         let result = decay_attraction(10.0, half_life, half_life, 0.001);
         assert!((result - 5.0).abs() < f32::EPSILON as f64);
-        
-        // Quarter decay after 2 half-lives
+
+        // Two half-lives → quartered
         let result = decay_attraction(10.0, half_life * 2.0, half_life, 0.001);
         assert!((result - 2.5).abs() < f32::EPSILON as f64);
-        
-        // Below floor
+
+        // Below floor → zeroed
         let result = decay_attraction(0.0005, half_life, half_life, 0.001);
         assert_eq!(result, 0.0);
-        
-        // Very long time
+
+        // Enormous activity → zeroed
         let result = decay_attraction(10.0, 10000.0, half_life, 0.001);
         assert_eq!(result, 0.0);
     }

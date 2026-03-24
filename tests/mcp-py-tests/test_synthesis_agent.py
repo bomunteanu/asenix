@@ -104,7 +104,7 @@ class TestAsenixClientPublishSynthesis(unittest.TestCase):
     @patch('requests.post')
     def test_returns_atom_id(self, mock_post):
         mock_post.return_value.json.return_value = {
-            'result': {'published_atoms': ['synth-atom-1'], 'pheromone_deltas': []}
+            'result': {'published_atoms': ['synth-atom-1']}
         }
         mock_post.return_value.raise_for_status = lambda: None
 

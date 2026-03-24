@@ -5,7 +5,8 @@ use sqlx::PgPool;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::{Arc, Mutex};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::broadcast;
+use tokio::sync::mpsc;
 use tokio::time::Instant;
 
 #[derive(Clone)]
@@ -110,8 +111,8 @@ pub struct AppState {
     pub pool: PgPool,
     pub graph_cache: Arc<tokio::sync::RwLock<GraphCache>>,
     pub condition_registry: Arc<tokio::sync::RwLock<crate::domain::condition::ConditionRegistry>>,
-    pub embedding_queue_tx: mpsc::Sender<String>, // atom_id
     pub sse_broadcast_tx: broadcast::Sender<SseEvent>,
+    pub embedding_tx: mpsc::Sender<String>,
     pub rate_limiter: RateLimiter,
     pub ip_rate_limiter: IpRateLimiter,     // 60 req/min per IP (unauthenticated)
     pub reg_rate_limiter: IpRateLimiter,    // 5 registrations/hour per IP
@@ -132,16 +133,16 @@ impl AppState {
     pub async fn new(
         pool: PgPool,
         config: Arc<Config>,
-        embedding_queue_tx: mpsc::Sender<String>,
         sse_broadcast_tx: broadcast::Sender<SseEvent>,
         storage: Arc<crate::storage::LocalStorage>,
+        embedding_tx: mpsc::Sender<String>,
     ) -> Result<Self, crate::error::MoteError> {
         // Initialize graph cache from DB so it survives restarts
         let graph_cache = Arc::new(tokio::sync::RwLock::new(
-            GraphCache::load_from_database(&pool).await.unwrap_or_else(|e| {
-                tracing::warn!("Failed to load graph cache from DB: {}, starting empty", e);
-                GraphCache::new()
-            })
+            GraphCache::load_from_database(&pool).await
+                .map_err(|e| crate::error::MoteError::Internal(
+                    format!("Cannot start: failed to load graph cache: {}", e)
+                ))?
         ));
 
         // Initialize condition registry
@@ -153,8 +154,8 @@ impl AppState {
             pool,
             graph_cache,
             condition_registry,
-            embedding_queue_tx,
             sse_broadcast_tx,
+            embedding_tx,
             rate_limiter: RateLimiter::new(),
             ip_rate_limiter: IpRateLimiter::new(),
             reg_rate_limiter: IpRateLimiter::new(),

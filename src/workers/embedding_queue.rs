@@ -1,24 +1,28 @@
 use crate::config::Config;
-use crate::domain::atom::AtomType;
+use crate::domain::atom::{Atom, AtomType, EmbeddingStatus, Lifecycle};
 use crate::domain::pheromone::*;
 use crate::domain::condition::ConditionRegistry;
 use crate::db::graph_cache::{GraphCache, EdgeType};
-use crate::embedding::provider::EmbeddingProvider;
+use crate::embedding::hybrid::HybridEncoder;
 use crate::error::{MoteError, Result};
 use pgvector::Vector;
 use sqlx::{PgPool, Row};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::RwLock;
+use tokio::sync::mpsc::Receiver;
+use tokio_util::sync::CancellationToken;
 use tracing::{info, error, debug, warn};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 pub struct EmbeddingQueue {
     pool: PgPool,
     config: Config,
     graph_cache: Arc<RwLock<GraphCache>>,
     condition_registry: Arc<RwLock<ConditionRegistry>>,
-    provider: Arc<EmbeddingProvider>,
+    hybrid_encoder: HybridEncoder,
+    receiver: Receiver<String>,
+    cancel_token: CancellationToken,
 }
 
 impl EmbeddingQueue {
@@ -27,14 +31,18 @@ impl EmbeddingQueue {
         config: Config,
         graph_cache: Arc<RwLock<GraphCache>>,
         condition_registry: Arc<RwLock<ConditionRegistry>>,
-        provider: Arc<EmbeddingProvider>,
+        hybrid_encoder: HybridEncoder,
+        receiver: Receiver<String>,
+        cancel_token: CancellationToken,
     ) -> Self {
         Self {
             pool,
             config,
             graph_cache,
             condition_registry,
-            provider,
+            hybrid_encoder,
+            receiver,
+            cancel_token,
         }
     }
 
@@ -66,16 +74,27 @@ impl EmbeddingQueue {
     }
 
     /// Start the embedding worker
-    pub async fn start(&self) {
+    pub async fn start(mut self) {
         info!("Starting embedding worker");
         let mut interval = tokio::time::interval(Duration::from_secs(30));
         loop {
             tokio::select! {
                 _ = interval.tick() => {
+                    // Fallback poll — catches anything the channel missed
                     match self.process_pending().await {
                         Ok(count) => { if count > 0 { info!("Processed {} embeddings", count); } }
                         Err(e) => { error!("Error processing embeddings: {}", e); }
                     }
+                }
+                Some(atom_id) = self.receiver.recv() => {
+                    // Immediate trigger — process this atom now
+                    if let Err(e) = self.process_atom(&atom_id).await {
+                        error!("Failed to process embedding for atom {}: {}", atom_id, e);
+                    }
+                }
+                _ = self.cancel_token.cancelled() => {
+                    info!("Embedding worker shutting down");
+                    break;
                 }
             }
         }
@@ -158,15 +177,68 @@ impl EmbeddingQueue {
     }
 
     async fn generate_embedding(&self, atom_id: &str) -> Result<Vec<f32>> {
-        let statement: String = sqlx::query_scalar("SELECT statement FROM atoms WHERE atom_id = $1")
-            .bind(atom_id)
-            .fetch_one(&self.pool)
-            .await?;
-        let embedding = self.provider.encode(&statement).await?;
-        let expected = self.config.hub.embedding_dimension;
+        let row = sqlx::query(
+            "SELECT statement, conditions, type, domain FROM atoms WHERE atom_id = $1"
+        )
+        .bind(atom_id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        let statement: String = row.get("statement");
+        let conditions: Value = row.get("conditions");
+        let domain: String = row.get("domain");
+        let atom_type_str: String = row.get("type");
+        let atom_type = match atom_type_str.as_str() {
+            "hypothesis"      => AtomType::Hypothesis,
+            "finding"         => AtomType::Finding,
+            "negative_result" => AtomType::NegativeResult,
+            "delta"           => AtomType::Delta,
+            "experiment_log"  => AtomType::ExperimentLog,
+            "synthesis"       => AtomType::Synthesis,
+            "bounty"          => AtomType::Bounty,
+            _                 => AtomType::Finding, // fallback
+        };
+
+        // Build a minimal Atom for the hybrid encoder (only atom_id, atom_type,
+        // statement and conditions are used internally)
+        let minimal_atom = Atom {
+            atom_id: atom_id.to_string(),
+            atom_type,
+            domain,
+            project_id: None,
+            statement,
+            conditions,
+            metrics: None,
+            provenance: json!({}),
+            author_agent_id: String::new(),
+            created_at: chrono::Utc::now(),
+            signature: vec![],
+            artifact_tree_hash: None,
+            confidence: 0.0,
+            ph_attraction: 0.0,
+            ph_repulsion: 0.0,
+            ph_novelty: 0.0,
+            ph_disagreement: 0.0,
+            embedding: None,
+            embedding_status: EmbeddingStatus::Pending,
+            repl_exact: 0,
+            repl_conceptual: 0,
+            repl_extension: 0,
+            traffic: 0,
+            lifecycle: Lifecycle::Provisional,
+            retracted: false,
+            retraction_reason: None,
+            ban_flag: false,
+            archived: false,
+            probationary: false,
+            summary: None,
+        };
+
+        let embedding = self.hybrid_encoder.encode(&minimal_atom).await?;
+        let expected = self.config.total_embedding_dimension();
         if embedding.len() != expected {
             return Err(MoteError::Internal(format!(
-                "Embedding dimension mismatch: provider returned {} but config expects {}",
+                "Hybrid embedding dimension mismatch: encoder returned {} but config expects {}",
                 embedding.len(), expected
             )));
         }
@@ -176,7 +248,7 @@ impl EmbeddingQueue {
     /// Update pheromone values for the neighbourhood of a newly embedded atom.
     async fn update_pheromone_neighbourhood(&self, atom_id: &str, embedding: &[f32]) -> Result<()> {
         let atom_row = sqlx::query(
-            "SELECT type, domain, conditions, metrics FROM atoms WHERE atom_id = $1"
+            "SELECT type, domain, project_id, conditions, metrics FROM atoms WHERE atom_id = $1"
         )
         .bind(atom_id)
         .fetch_optional(&self.pool)
@@ -197,10 +269,11 @@ impl EmbeddingQueue {
         };
 
         let domain: String   = atom_row.get("domain");
+        let project_id: Option<String> = atom_row.get("project_id");
         let conditions: Value = atom_row.get("conditions");
         let metrics: Option<Value> = atom_row.get("metrics");
 
-        let neighbours = self.find_neighbours(embedding, &domain, atom_id).await?;
+        let neighbours = self.find_neighbours(embedding, &domain, project_id.as_deref(), atom_id).await?;
         let mut updates: Vec<(String, &str, f64)> = Vec::new();
 
         // ── Fix 4: per-atom novelty (not a shared count) ─────────────────────
@@ -251,9 +324,17 @@ impl EmbeddingQueue {
             }
 
             AtomType::NegativeResult => {
-                // Fix 2: repulsion belongs to the negative-result atom only,
-                // not spread to neighbours who had nothing to do with the failure.
+                // Own atom gets full repulsion signal.
                 updates.push((atom_id.to_string(), "ph_repulsion", repulsion_increment()));
+
+                // Propagate warning pheromone to neighbours with distance-weighted decay.
+                // Nearest neighbours (cosine_distance ≈ 0) get up to 0.5; decays to 0 at orthogonal.
+                for neighbour in &neighbours {
+                    let propagated = (1.0 - neighbour.cosine_distance) * 0.5;
+                    if propagated > 0.05 {
+                        updates.push((neighbour.atom_id.clone(), "ph_repulsion", propagated));
+                    }
+                }
             }
 
             _ => {} // Hypotheses, bounties, etc. get only novelty updates
@@ -288,15 +369,17 @@ impl EmbeddingQueue {
         Ok(())
     }
 
-    /// Find atoms within neighbourhood radius of the given embedding.
-    async fn find_neighbours(&self, embedding: &[f32], domain: &str, exclude_atom_id: &str) -> Result<Vec<NeighbourInfo>> {
+    /// Find atoms within neighbourhood radius of the given embedding, scoped to the same project.
+    async fn find_neighbours(&self, embedding: &[f32], domain: &str, project_id: Option<&str>, exclude_atom_id: &str) -> Result<Vec<NeighbourInfo>> {
         let pg_vector = Vector::from(embedding.to_vec());
         let rows = sqlx::query(
-            "SELECT atom_id, ph_attraction, ph_repulsion, ph_novelty, conditions, metrics
+            "SELECT atom_id, ph_attraction, ph_repulsion, ph_novelty, conditions, metrics,
+                    (embedding <=> $2) AS cosine_distance
              FROM atoms
              WHERE embedding IS NOT NULL
                AND embedding_status = 'ready'
                AND domain = $1
+               AND project_id IS NOT DISTINCT FROM $5
                AND NOT archived
                AND embedding <=> $2 < $3
                AND atom_id != $4"
@@ -305,21 +388,24 @@ impl EmbeddingQueue {
         .bind(&pg_vector)
         .bind(self.config.hub.neighbourhood_radius)
         .bind(exclude_atom_id)
+        .bind(project_id)
         .fetch_all(&self.pool)
         .await?;
 
         let mut neighbours = Vec::new();
         for row in rows {
-            let ph_attraction: f32 = row.get("ph_attraction");
-            let ph_repulsion: f32  = row.get("ph_repulsion");
-            let ph_novelty: f32    = row.get("ph_novelty");
+            let ph_attraction: f32   = row.get("ph_attraction");
+            let ph_repulsion: f32    = row.get("ph_repulsion");
+            let ph_novelty: f32      = row.get("ph_novelty");
+            let cosine_distance: f64 = row.get("cosine_distance");
             neighbours.push(NeighbourInfo {
-                atom_id:      row.get("atom_id"),
-                ph_attraction: ph_attraction as f64,
-                ph_repulsion:  ph_repulsion as f64,
-                ph_novelty:    ph_novelty as f64,
-                conditions:    row.get("conditions"),
-                metrics:       row.get("metrics"),
+                atom_id:         row.get("atom_id"),
+                ph_attraction:   ph_attraction as f64,
+                ph_repulsion:    ph_repulsion as f64,
+                ph_novelty:      ph_novelty as f64,
+                cosine_distance,
+                conditions:      row.get("conditions"),
+                metrics:         row.get("metrics"),
             });
         }
         Ok(neighbours)
@@ -359,7 +445,8 @@ impl EmbeddingQueue {
 
         for c in &mut contradictions {
             let (contradicts_edges, total_edges) = self.count_edge_types(&c.atom_id).await?;
-            c.new_disagreement = disagreement(contradicts_edges, total_edges);
+            // +2: the bidirectional contradicts pair is about to be inserted — count it now
+            c.new_disagreement = disagreement(contradicts_edges + 2, total_edges + 2);
         }
         Ok(contradictions)
     }
@@ -402,18 +489,10 @@ impl EmbeddingQueue {
         .execute(&self.pool)
         .await?;
 
-        // Bump repl_exact counter on the replicated atom
+        // Bump repl_exact counter on the replicated atom.
+        // Lifecycle transitions (provisional → replicated → core) are handled by LifecycleWorker.
         sqlx::query(
             "UPDATE atoms SET repl_exact = repl_exact + 1 WHERE atom_id = $1"
-        )
-        .bind(existing_atom_id)
-        .execute(&self.pool)
-        .await?;
-
-        // Advance lifecycle: provisional → replicated when repl_exact >= 1
-        sqlx::query(
-            "UPDATE atoms SET lifecycle = 'replicated'
-             WHERE atom_id = $1 AND lifecycle = 'provisional' AND repl_exact >= 1"
         )
         .bind(existing_atom_id)
         .execute(&self.pool)
@@ -530,7 +609,14 @@ impl EmbeddingQueue {
         }
 
         for ((atom_id, field), value) in merged {
-            sqlx::query(&format!("UPDATE atoms SET {} = $1 WHERE atom_id = $2", field))
+            // ph_repulsion is accumulated across multiple negative-result events;
+            // all other pheromone fields are computed fresh each time (overwrite is correct).
+            let sql = if field == "ph_repulsion" {
+                format!("UPDATE atoms SET {f} = LEAST({f} + $1, 10.0) WHERE atom_id = $2", f = field)
+            } else {
+                format!("UPDATE atoms SET {} = $1 WHERE atom_id = $2", field)
+            };
+            sqlx::query(&sql)
                 .bind(value as f32)
                 .bind(&atom_id)
                 .execute(&self.pool)
@@ -554,12 +640,13 @@ fn conditions_shared_keys_equivalent(c1: &Value, c2: &Value) -> bool {
 
 #[derive(Debug, Clone)]
 struct NeighbourInfo {
-    atom_id:      String,
-    ph_attraction: f64,
-    ph_repulsion:  f64,
-    ph_novelty:    f64,
-    conditions:    Value,
-    metrics:       Option<Value>,
+    atom_id:        String,
+    ph_attraction:  f64,
+    ph_repulsion:   f64,
+    ph_novelty:     f64,
+    cosine_distance: f64,
+    conditions:     Value,
+    metrics:        Option<Value>,
 }
 
 #[derive(Debug, Clone)]

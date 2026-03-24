@@ -332,6 +332,107 @@ pub async fn admin_login(
     Ok(Json(json!({"token": token, "expires_in": 86400})))
 }
 
+/// GET /admin/export
+///
+/// Exports all experiment data as JSON for NeurIPS figure generation:
+/// metrics snapshots, atoms with pheromone state, edges, and agent activity.
+pub async fn export_data(
+    State(state): State<Arc<AppState>>,
+) -> std::result::Result<Json<Value>, (StatusCode, String)> {
+    // 1. Metrics snapshots
+    let snapshots = sqlx::query(
+        "SELECT id, timestamp, agent_count, atom_count,
+                crystallization_rate, frontier_diversity,
+                contradiction_resolution, landscape_structure, information_propagation
+         FROM metrics_snapshots
+         ORDER BY timestamp"
+    )
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let snapshots_json: Vec<Value> = snapshots.iter().map(|r| json!({
+        "id": r.get::<i32, _>("id"),
+        "timestamp": r.get::<chrono::DateTime<chrono::Utc>, _>("timestamp"),
+        "agent_count": r.get::<Option<i32>, _>("agent_count"),
+        "atom_count": r.get::<Option<i32>, _>("atom_count"),
+        "crystallization_rate": r.get::<Option<serde_json::Value>, _>("crystallization_rate"),
+        "frontier_diversity": r.get::<Option<f64>, _>("frontier_diversity"),
+        "contradiction_resolution": r.get::<Option<serde_json::Value>, _>("contradiction_resolution"),
+        "landscape_structure": r.get::<Option<serde_json::Value>, _>("landscape_structure"),
+        "information_propagation": r.get::<Option<serde_json::Value>, _>("information_propagation"),
+    })).collect();
+
+    // 2. Atoms with pheromone state
+    let atoms = sqlx::query(
+        "SELECT atom_id, type, domain, lifecycle, author_agent_id,
+                ph_attraction, ph_repulsion, ph_novelty, ph_disagreement,
+                repl_exact, repl_conceptual, confidence, created_at
+         FROM atoms WHERE NOT archived ORDER BY created_at"
+    )
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let atoms_json: Vec<Value> = atoms.iter().map(|r| json!({
+        "atom_id": r.get::<String, _>("atom_id"),
+        "type": r.get::<String, _>("type"),
+        "domain": r.get::<String, _>("domain"),
+        "lifecycle": r.get::<String, _>("lifecycle"),
+        "author_agent_id": r.get::<String, _>("author_agent_id"),
+        "ph_attraction": r.get::<f32, _>("ph_attraction"),
+        "ph_repulsion": r.get::<f32, _>("ph_repulsion"),
+        "ph_novelty": r.get::<f32, _>("ph_novelty"),
+        "ph_disagreement": r.get::<f32, _>("ph_disagreement"),
+        "repl_exact": r.get::<i32, _>("repl_exact"),
+        "repl_conceptual": r.get::<i32, _>("repl_conceptual"),
+        "confidence": r.get::<f32, _>("confidence"),
+        "created_at": r.get::<chrono::DateTime<chrono::Utc>, _>("created_at"),
+    })).collect();
+
+    // 3. Full edge list (knowledge graph)
+    let edges = sqlx::query(
+        "SELECT id, source_id, target_id, type, author_agent_id, created_at
+         FROM edges ORDER BY created_at"
+    )
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let edges_json: Vec<Value> = edges.iter().map(|r| json!({
+        "id": r.get::<i64, _>("id"),
+        "source_id": r.get::<String, _>("source_id"),
+        "target_id": r.get::<String, _>("target_id"),
+        "type": r.get::<String, _>("type"),
+        "author_agent_id": r.get::<String, _>("author_agent_id"),
+        "created_at": r.get::<chrono::DateTime<chrono::Utc>, _>("created_at"),
+    })).collect();
+
+    // 4. Lifecycle transition audit log
+    let transitions = sqlx::query(
+        "SELECT atom_id, from_lifecycle, to_lifecycle, transitioned_at
+         FROM lifecycle_transitions ORDER BY transitioned_at"
+    )
+    .fetch_all(&state.pool)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+
+    let transitions_json: Vec<Value> = transitions.iter().map(|r| json!({
+        "atom_id": r.get::<String, _>("atom_id"),
+        "from_lifecycle": r.get::<String, _>("from_lifecycle"),
+        "to_lifecycle": r.get::<String, _>("to_lifecycle"),
+        "transitioned_at": r.get::<chrono::DateTime<chrono::Utc>, _>("transitioned_at"),
+    })).collect();
+
+    Ok(Json(json!({
+        "metrics_snapshots": snapshots_json,
+        "atoms": atoms_json,
+        "edges": edges_json,
+        "lifecycle_transitions": transitions_json,
+        "exported_at": chrono::Utc::now(),
+    })))
+}
+
 /// POST /admin/trigger-bounty-tick
 ///
 /// Immediately runs one bounty-worker tick against the live database.
@@ -346,6 +447,7 @@ pub async fn trigger_bounty_tick(
         state.config.pheromone.exploration_density_radius,
         state.config.hub.embedding_dimension,
         state.config.workers.bounty_sparse_region_max_atoms,
+        state.config.hub.neighbourhood_radius,
     );
 
     match worker.run_bounty_tick().await {

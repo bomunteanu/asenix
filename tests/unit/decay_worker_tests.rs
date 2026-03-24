@@ -27,7 +27,7 @@ fn create_test_config() -> Config {
             max_artifact_storage_per_agent_bytes: 10485760,  // 10MB for tests
         },
         pheromone: PheromoneConfig {
-            decay_half_life_hours: 24,
+            decay_half_life_atoms: 24,
             attraction_cap: 100.0,
             novelty_radius: 0.3,
             disagreement_threshold: 0.5,
@@ -47,6 +47,9 @@ fn create_test_config() -> Config {
             staleness_check_interval_minutes: 60,
             bounty_needed_novelty_threshold: 0.7,
             bounty_sparse_region_max_atoms: 3,
+            lifecycle_check_interval_minutes: 60,
+            metrics_collection_interval_seconds: 30,
+            frontier_diversity_k: 8,
         },
         acceptance: AcceptanceConfig {
             required_provenance_fields: vec!["agent".to_string(), "timestamp".to_string()],
@@ -68,7 +71,7 @@ async fn test_decay_worker_creation() {
     // Test that DecayWorker can be created with valid config
     // This is a structural test - actual database tests would need
     // a proper test database setup
-    assert_eq!(config.pheromone.decay_half_life_hours, 24);
+    assert_eq!(config.pheromone.decay_half_life_atoms, 24);
     assert_eq!(config.pheromone.attraction_cap, 100.0);
 }
 
@@ -126,7 +129,7 @@ async fn test_decay_worker_configuration_validation() {
     
     // Test invalid half-life
     let mut invalid_config = config.clone();
-    invalid_config.pheromone.decay_half_life_hours = 0;
+    invalid_config.pheromone.decay_half_life_atoms = 0;
     assert!(invalid_config.validate().is_err(), "Zero half-life should fail validation");
     
     // Test invalid attraction cap
@@ -305,11 +308,11 @@ async fn test_decay_worker_integration_points() {
     let config = create_test_config();
     
     // Test that configuration values are used correctly
-    assert_eq!(config.pheromone.decay_half_life_hours, 24);
+    assert_eq!(config.pheromone.decay_half_life_atoms, 24);
     assert_eq!(config.pheromone.attraction_cap, 100.0);
     
     // Test that the worker would use these values
-    let half_life_hours = config.pheromone.decay_half_life_hours as f64;
+    let half_life_hours = config.pheromone.decay_half_life_atoms as f64;
     assert!(half_life_hours > 0.0, "Half-life should be positive");
     
     let attraction_cap = config.pheromone.attraction_cap;

@@ -60,6 +60,8 @@ pub fn create_test_config() -> Config {
             staleness_check_interval_minutes: 30,
             bounty_needed_novelty_threshold: 0.7,
             bounty_sparse_region_max_atoms: 3,
+            lifecycle_check_interval_minutes: 60,
+            metrics_collection_interval_seconds: 30,
         },
         acceptance: AcceptanceConfig {
             required_provenance_fields: vec![
@@ -113,11 +115,15 @@ pub async fn create_test_app() -> Result<(Arc<AppState>, Router), anyhow::Error>
     sqlx::migrate!("./migrations").run(&pool).await?;
     
     // Create channels
-    let (embedding_queue_tx, _embedding_queue_rx) = mpsc::channel(100);
     let (sse_broadcast_tx, _sse_broadcast_rx) = broadcast::channel(100);
-    
+
+    let storage = std::sync::Arc::new(asenix::storage::LocalStorage::new(
+        std::path::PathBuf::from("./test_artifacts")
+    ));
+
     // Create app state
-    let state = Arc::new(AppState::new(pool, config, embedding_queue_tx, sse_broadcast_tx).await?);
+    let (embedding_tx, _embedding_rx) = tokio::sync::mpsc::channel::<String>(100);
+    let state = Arc::new(AppState::new(pool, config, sse_broadcast_tx, storage, embedding_tx).await?);
     
     // Create router
     let app = Router::new()

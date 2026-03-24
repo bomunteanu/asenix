@@ -32,7 +32,7 @@ pub struct HubConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PheromoneConfig {
-    pub decay_half_life_hours: u64,
+    pub decay_half_life_atoms: u64,
     pub attraction_cap: f64,
     pub novelty_radius: f64,
     pub disagreement_threshold: f64,
@@ -56,6 +56,14 @@ pub struct WorkersConfig {
     pub staleness_check_interval_minutes: u64,
     pub bounty_needed_novelty_threshold: f64,
     pub bounty_sparse_region_max_atoms: i64,
+    pub lifecycle_check_interval_minutes: u64,
+    pub metrics_collection_interval_seconds: u64,
+    /// Number of k-means clusters for the frontier_diversity metric.
+    /// Fixed k required for temporal comparability across the sweep — see
+    /// src/metrics/diversity.rs module docs for the full rationale.
+    /// Default 8: reflects ~5 independent axes in the llm_efficiency domain
+    /// with slack for unexpected sub-regions.
+    pub frontier_diversity_k: usize,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,8 +104,8 @@ impl Config {
         }
         
         // Validate pheromone configuration
-        if self.pheromone.decay_half_life_hours == 0 {
-            anyhow::bail!("decay_half_life_hours must be > 0");
+        if self.pheromone.decay_half_life_atoms == 0 {
+            anyhow::bail!("decay_half_life_atoms must be > 0");
         }
         if self.pheromone.attraction_cap <= 0.0 {
             anyhow::bail!("attraction_cap must be > 0");

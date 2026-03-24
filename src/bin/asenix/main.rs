@@ -98,6 +98,16 @@ enum AgentCommands {
         n: usize,
     },
 
+    /// Stop background agents launched with `agent run -n N`
+    Stop {
+        /// Project slug to stop; omit to stop all running agents
+        #[arg(long)]
+        project: Option<String>,
+        /// Stop only agent number N (default: all agents for the project)
+        #[arg(long, short)]
+        n: Option<usize>,
+    },
+
     /// List all registered agents on this machine
     List,
 }
@@ -299,6 +309,7 @@ fn run() -> Result<()> {
         Commands::Status { hub } => cmd_status(&hub),
         Commands::Agent { subcommand } => match subcommand {
             AgentCommands::Run { hub, project, n } => cmd_agent_run(&hub, &project, n),
+            AgentCommands::Stop { project, n } => cmd_agent_stop(project.as_deref(), n),
             AgentCommands::List => cmd_agent_list(),
         },
         Commands::Domain { subcommand } => match subcommand {
@@ -637,29 +648,40 @@ fn cmd_agent_run(hub: &str, project_slug: &str, n: usize) -> Result<()> {
                         a
                     })
                     .collect();
-                let payload = serde_json::json!({
-                    "agent_id": first_cred.agent_id,
-                    "api_token": first_cred.api_token,
-                    "atoms": atoms
-                });
-                match api_client.mcp_call("publish_atoms", payload) {
-                    Ok(result) => {
-                        let atom_id = result
-                            .pointer("/published_atoms/0")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("unknown");
-                        display::success(&format!("Seed bounty posted (atom_id: {})", atom_id));
+                // Publish each seed atom via the `publish` tool (one atom per call).
+                let mut last_atom_id = String::from("unknown");
+                let mut publish_ok = true;
+                for atom in &atoms {
+                    let mut payload = atom.clone();
+                    if let Some(obj) = payload.as_object_mut() {
+                        obj.insert("agent_id".into(), first_cred.agent_id.as_str().into());
+                        obj.insert("api_token".into(), first_cred.api_token.as_str().into());
+                        obj.entry("project_id").or_insert_with(|| project.project_id.as_str().into());
+                        obj.entry("provenance").or_insert(serde_json::json!({}));
                     }
-                    Err(e) => {
-                        println!("  {} Seed bounty post failed ({})", "⚠".yellow(), e);
-                        print!("  Agents may stall with nothing to explore. Continue? [y/N]: ");
-                        io::stdout().flush()?;
-                        let mut ans = String::new();
-                        io::stdin().read_line(&mut ans)?;
-                        if ans.trim().to_lowercase() != "y" {
-                            println!("Cancelled.");
-                            std::process::exit(1);
+                    match api_client.mcp_call("publish", payload) {
+                        Ok(result) => {
+                            if let Some(id) = result.get("atom_id").and_then(|v| v.as_str()) {
+                                last_atom_id = id.to_string();
+                            }
                         }
+                        Err(e) => {
+                            publish_ok = false;
+                            println!("  {} Seed atom post failed ({})", "⚠".yellow(), e);
+                            break;
+                        }
+                    }
+                }
+                if publish_ok {
+                    display::success(&format!("Seed bounty posted (atom_id: {})", last_atom_id));
+                } else {
+                    print!("  Agents may stall with nothing to explore. Continue? [y/N]: ");
+                    io::stdout().flush()?;
+                    let mut ans = String::new();
+                    io::stdin().read_line(&mut ans)?;
+                    if ans.trim().to_lowercase() != "y" {
+                        println!("Cancelled.");
+                        std::process::exit(1);
                     }
                 }
             }
@@ -740,10 +762,12 @@ fn cmd_agent_run(hub: &str, project_slug: &str, n: usize) -> Result<()> {
         // Build prompt
         let prompt = if claude_md.is_empty() {
             format!(
-                "Your credentials: AGENT_ID={agent_id} API_TOKEN={api_token}\n\
+                "Your credentials: AGENT_ID={agent_id} API_TOKEN={api_token} PROJECT_ID={project_id}\n\
                  Working directory: {workdir}\n\
                  The MCP server \"asenix\" is configured — use it for all hub calls.\n\
-                 Project: {project_name} (id: {project_id})",
+                 Project: {project_name} (id: {project_id})\n\
+                 IMPORTANT: Every atom you publish must include \"project_id\": \"{project_id}\".\n\
+                 IMPORTANT: Every survey call must include \"project_id\": \"{project_id}\".",
                 agent_id = cred.agent_id,
                 api_token = cred.api_token,
                 workdir = workdir.display(),
@@ -756,6 +780,7 @@ fn cmd_agent_run(hub: &str, project_slug: &str, n: usize) -> Result<()> {
                  Working directory: {workdir}\n\
                  The MCP server \"asenix\" is configured — use it for all hub calls.\n\
                  IMPORTANT: Every atom you publish must include \"project_id\": \"{project_id}\" — this is mandatory.\n\
+                 IMPORTANT: Every survey call must include \"project_id\": \"{project_id}\" — this scopes results to this project.\n\
                  Follow all instructions in the document below exactly.\n\n\
                  {claude_md}",
                 agent_id = cred.agent_id,
@@ -838,10 +863,10 @@ fn cmd_agent_run(hub: &str, project_slug: &str, n: usize) -> Result<()> {
                     if let Ok(mut f) = log_arc.lock() {
                         let _ = std::io::Write::write_fmt(&mut *f, format_args!("{}\n", line));
                     }
-                    // Track publish_atoms calls.
+                    // Track publish tool calls.
                     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) {
                         if v["type"].as_str() == Some("tool_use")
-                            && v["name"].as_str().map_or(false, |n| n.contains("publish_atoms"))
+                            && v["name"].as_str().map_or(false, |n| n == "publish" || n.contains("publish"))
                         {
                             saw_publish_clone.store(true, std::sync::atomic::Ordering::Relaxed);
                         }
@@ -871,8 +896,8 @@ fn cmd_agent_run(hub: &str, project_slug: &str, n: usize) -> Result<()> {
             if new_atoms > 0 {
                 display::success(&format!("{} new atom(s) published to hub", new_atoms));
             } else if saw_publish.load(std::sync::atomic::Ordering::Relaxed) {
-                // publish_atoms was called but atoms may still be embedding.
-                display::success("publish_atoms called — atoms may still be indexing");
+                // publish was called but atoms may still be embedding.
+                display::success("publish called — atoms may still be indexing");
             } else {
                 println!(
                     "  {} No atoms published — check the log for details",
@@ -890,8 +915,8 @@ fn cmd_agent_run(hub: &str, project_slug: &str, n: usize) -> Result<()> {
             }
         } else {
             let log_file = std::fs::File::create(&log_path)?;
-            match std::process::Command::new("claude")
-                .args([
+            let mut cmd = std::process::Command::new("claude");
+            cmd.args([
                     "--dangerously-skip-permissions",
                     "--mcp-config",
                     mcp_config_path.to_str().unwrap_or(""),
@@ -900,10 +925,22 @@ fn cmd_agent_run(hub: &str, project_slug: &str, n: usize) -> Result<()> {
                 ])
                 .current_dir(&workdir)
                 .stdout(log_file.try_clone()?)
-                .stderr(log_file)
-                .spawn()
+                .stderr(log_file);
+
+            // Own process group so SIGTERM to -pgid kills claude + any train.py child.
+            #[cfg(unix)]
             {
+                use std::os::unix::process::CommandExt;
+                cmd.process_group(0);
+            }
+
+            match cmd.spawn() {
                 Ok(child) => {
+                    // Write PID file so `asenix agent stop` can find this process group.
+                    let _ = std::fs::write(
+                        config::pid_path(project_slug, *agent_n),
+                        child.id().to_string(),
+                    );
                     display::progress(&format!("Agent {} → log: {}", agent_n, log_path.display()));
                     children.push((*agent_n, child, log_path));
                 }
@@ -985,7 +1022,7 @@ fn get_project_atom_count(
     project_id: &str,
     cred: &config::AgentCred,
 ) -> usize {
-    match api_client.mcp_call(
+    match api_client.rpc_call(
         "search_atoms",
         serde_json::json!({
             "agent_id": cred.agent_id,
@@ -1645,6 +1682,109 @@ fn cmd_agent_list() -> Result<()> {
     );
 
     Ok(())
+}
+
+fn cmd_agent_stop(project: Option<&str>, only_n: Option<usize>) -> Result<()> {
+    let tmp_asenix = std::env::temp_dir().join("asenix");
+
+    // Collect (project_slug, agent_n, pid_path) tuples.
+    let candidates: Vec<(String, usize, std::path::PathBuf)> = if let Some(slug) = project {
+        collect_pid_paths(&tmp_asenix.join(slug), slug, only_n)
+    } else {
+        let mut all = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&tmp_asenix) {
+            for entry in entries.flatten() {
+                if entry.path().is_dir() {
+                    let slug = entry.file_name().to_string_lossy().into_owned();
+                    all.extend(collect_pid_paths(&entry.path(), &slug, only_n));
+                }
+            }
+        }
+        all
+    };
+
+    if candidates.is_empty() {
+        display::progress("No running agents found");
+        display::hint("Agents are only stoppable when launched with `agent run -n 2` or more");
+        return Ok(());
+    }
+
+    let mut stopped = 0usize;
+    let mut already_gone = 0usize;
+
+    for (slug, agent_n, pid_path) in &candidates {
+        let pid_str = match std::fs::read_to_string(pid_path) {
+            Ok(s) => s,
+            Err(_) => continue,
+        };
+        let pid: u32 = match pid_str.trim().parse() {
+            Ok(p) if p > 0 => p,
+            _ => continue,
+        };
+
+        #[cfg(unix)]
+        {
+            let ret = unsafe { libc::kill(-(pid as libc::pid_t), libc::SIGTERM) };
+            if ret == 0 {
+                display::success(&format!(
+                    "Stopped agent {} (project: {}, pgid: {})",
+                    agent_n, slug, pid
+                ));
+                stopped += 1;
+            } else {
+                already_gone += 1;
+            }
+        }
+        #[cfg(not(unix))]
+        {
+            display::error("agent stop is only supported on Unix");
+        }
+
+        // Remove PID file regardless — process is either stopped or already gone.
+        let _ = std::fs::remove_file(pid_path);
+    }
+
+    if stopped == 0 && already_gone > 0 {
+        display::progress(&format!(
+            "{} agent(s) were already stopped",
+            already_gone
+        ));
+    }
+
+    Ok(())
+}
+
+/// Collect all agent.pid files under `dir/<n>/agent.pid`.
+fn collect_pid_paths(
+    dir: &std::path::Path,
+    slug: &str,
+    only_n: Option<usize>,
+) -> Vec<(String, usize, std::path::PathBuf)> {
+    let mut result = Vec::new();
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return result,
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        let n: usize = match entry.file_name().to_string_lossy().parse() {
+            Ok(n) => n,
+            Err(_) => continue,
+        };
+        if let Some(only) = only_n {
+            if n != only {
+                continue;
+            }
+        }
+        let pid_path = path.join("agent.pid");
+        if pid_path.exists() {
+            result.push((slug.to_string(), n, pid_path));
+        }
+    }
+    result
 }
 
 fn cmd_bounty_post(hub: &str, domain: &str) -> Result<()> {

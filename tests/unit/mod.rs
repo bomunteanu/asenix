@@ -19,3 +19,4 @@ mod query_cluster_tests;
 mod suggestions_tests;
 mod artifact_processor_tests;
 mod exploration_tests;
+mod frontier_diversity_tests;

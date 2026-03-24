@@ -77,12 +77,14 @@ impl std::fmt::Display for EmbeddingStatus {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum Lifecycle {
     Provisional,
     Replicated,
     Core,
     Contested,
+    Resolved,
+    Retracted,
 }
 
 impl std::fmt::Display for Lifecycle {
@@ -92,6 +94,8 @@ impl std::fmt::Display for Lifecycle {
             Lifecycle::Replicated => write!(f, "replicated"),
             Lifecycle::Core => write!(f, "core"),
             Lifecycle::Contested => write!(f, "contested"),
+            Lifecycle::Resolved => write!(f, "resolved"),
+            Lifecycle::Retracted => write!(f, "retracted"),
         }
     }
 }

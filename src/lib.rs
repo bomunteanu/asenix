@@ -11,4 +11,5 @@ pub mod embedding;
 pub mod error;
 pub mod state;
 pub mod storage;
+pub mod metrics;
 pub mod workers;

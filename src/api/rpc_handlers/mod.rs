@@ -1,2 +1,2 @@
 // RPC handlers module
-pub mod rpc_backup;
+pub mod rpc_impl;

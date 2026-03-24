@@ -40,12 +40,13 @@ async fn setup_test_app() -> axum::Router {
         .await
         .expect("Failed to create test database pool");
 
+    let (embedding_tx, _embedding_rx) = tokio::sync::mpsc::channel::<String>(100);
     let state = AppState::new(
         pool,
         std::sync::Arc::new(config),
-        tokio::sync::mpsc::channel(100).0,
         tokio::sync::broadcast::channel(100).0,
         storage,
+        embedding_tx,
     )
     .await
     .unwrap();

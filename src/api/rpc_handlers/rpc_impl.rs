@@ -104,19 +104,29 @@ pub async fn handle_mcp(
 
     // Dispatch to method handler
     let result = match request.method.as_str() {
-        "register_agent" => handle_register_agent(&state, request.params).await,
+        // ── New v2 interface ──────────────────────────────────────────────────────
+        "register"       => handle_register(&state, request.params).await,
+        "survey"         => handle_survey(&state, request.params).await,
+        "get_atom"       => handle_get_atom(&state, request.params).await,
+        "publish"        => handle_publish(&state, request.params).await,
+        "claim"          => handle_claim(&state, request.params).await,
+        "release_claim"  => handle_release_claim(&state, request.params).await,
+        "get_lineage"    => handle_get_lineage(&state, request.params).await,
+        "retract"        => handle_retract(&state, request.params).await,
+        // ── Legacy v1 interface (kept for backward compat) ────────────────────────
+        "register_agent"        => handle_register_agent(&state, request.params).await,
         "register_agent_simple" => handle_register_agent_simple(&state, request.params).await,
-        "confirm_agent" => handle_confirm_agent(&state, request.params).await,
-        "search_atoms" => handle_search_atoms(&state, request.params).await,
-        "query_cluster" => handle_query_cluster(&state, request.params).await,
-        "claim_direction" => handle_claim_direction(&state, request.params).await,
-        "publish_atoms" => handle_publish_atoms(&state, request.params).await,
-        "retract_atom" => handle_retract_atom(&state, request.params).await,
-        "ban_atom" => handle_ban_atom(&state, request.params).await,
-        "unban_atom" => handle_unban_atom(&state, request.params).await,
-        "get_suggestions" => handle_get_suggestions(&state, request.params).await,
-        "get_field_map" => handle_get_field_map(&state, request.params).await,
-        "get_graph_edges" => handle_get_graph_edges(&state, request.params).await,
+        "confirm_agent"         => handle_confirm_agent(&state, request.params).await,
+        "search_atoms"          => handle_search_atoms(&state, request.params).await,
+        "query_cluster"         => handle_query_cluster(&state, request.params).await,
+        "claim_direction"       => handle_claim_direction(&state, request.params).await,
+        "publish_atoms"         => handle_publish_atoms(&state, request.params).await,
+        "retract_atom"          => handle_retract_atom(&state, request.params).await,
+        "ban_atom"              => handle_ban_atom(&state, request.params).await,
+        "unban_atom"            => handle_unban_atom(&state, request.params).await,
+        "get_suggestions"       => handle_get_suggestions(&state, request.params).await,
+        "get_field_map"         => handle_get_field_map(&state, request.params).await,
+        "get_graph_edges"       => handle_get_graph_edges(&state, request.params).await,
         _ => Err(MoteError::Validation(format!("Method not found: {}", request.method))),
     };
 
@@ -368,13 +378,11 @@ pub async fn handle_query_cluster(
         "lifecycle": r.atom.lifecycle.to_string(),
     })).collect();
 
-    // Add graph traversal information if requested
+    // Add graph traversal information if requested — use cache, not DB
     let graph_traversal = if include_graph_traversal && !results.is_empty() {
         let atom_ids: Vec<String> = results.iter().map(|r| r.atom.atom_id.clone()).collect();
-        let traversal_info = crate::db::queries::get_graph_traversal_info(
-            &state.pool, &atom_ids, max_hops, edge_types.as_deref()
-        ).await.unwrap_or_default();
-        
+        let cache = state.graph_cache.read().await;
+        let traversal_info = cache.get_subgraph(&atom_ids, max_hops, &edge_types);
         Some(json!({
             "hops_explored": traversal_info.hops_explored,
             "connected_atoms": traversal_info.connected_atoms,
@@ -577,8 +585,6 @@ pub async fn handle_publish_atoms(
         .ok_or_else(|| MoteError::Validation("atoms must be an array".to_string()))?;
 
     let mut published_atoms: Vec<String> = Vec::new();
-    let mut pheromone_deltas: Vec<Value> = Vec::new();
-    let mut auto_contradictions: Vec<Value> = Vec::new();
 
     for atom_value in atoms_array {
         let atom_type_str: String = serde_json::from_value(atom_value["atom_type"].clone())
@@ -672,6 +678,9 @@ pub async fn handle_publish_atoms(
 
         let atom_id = crate::db::queries::publish_atom(&state.pool, &agent_id, atom_input).await?;
 
+        // Trigger immediate embedding (fire-and-forget; fallback poll handles misses)
+        let _ = state.embedding_tx.send(atom_id.clone()).await;
+
         // Auto-register any new condition keys for this domain (no-op if already present)
         auto_register_conditions(&state.pool, &domain, &conditions).await;
 
@@ -692,62 +701,6 @@ pub async fn handle_publish_atoms(
             }),
             timestamp: chrono::Utc::now(),
         });
-
-        // ── Pheromone + contradiction updates ────────────────────────────────
-        let is_evidence = matches!(atom_type,
-            crate::domain::atom::AtomType::Finding |
-            crate::domain::atom::AtomType::NegativeResult);
-
-        let mut attraction_delta = 0.0_f64;
-        let mut disagreement_delta = 0.0_f64;
-
-        if is_evidence {
-            // Detect contradictions before bumping pheromone
-            let contradictions = crate::db::queries::find_contradicting_atoms(
-                &state.pool, &domain, &atom_id, &conditions, &metrics,
-            ).await?;
-
-            for c in &contradictions {
-                // Bump disagreement on both atoms
-                crate::db::queries::update_pheromone_disagreement(
-                    &state.pool, &atom_id, &c.existing_atom_id,
-                ).await?;
-                disagreement_delta += 0.1;
-
-                auto_contradictions.push(json!({
-                    "new_atom_id":        atom_id,
-                    "existing_atom_id":   c.existing_atom_id,
-                    "existing_statement": c.existing_statement,
-                    "conflicting_metrics": c.conflicting_metrics,
-                }));
-
-                let _ = state.sse_broadcast_tx.send(crate::state::SseEvent {
-                    event_type: "contradiction_detected".to_string(),
-                    data: json!({
-                        "type":                 "contradiction_detected",
-                        "atom_id":              atom_id,
-                        "contradicting_atom_id": c.existing_atom_id,
-                        "domain":               domain,
-                    }),
-                    timestamp: chrono::Utc::now(),
-                });
-            }
-
-            // For findings with positive metrics, bump attraction in the neighbourhood.
-            // Use 0.1 as a fixed delta (proper metric-improvement scoring is a future enhancement).
-            if matches!(atom_type, crate::domain::atom::AtomType::Finding) {
-                crate::db::queries::update_pheromone_attraction(
-                    &state.pool, &domain, &atom_id, 0.1,
-                ).await?;
-                attraction_delta = 0.1;
-            }
-        }
-
-        pheromone_deltas.push(json!({
-            "atom_id":           atom_id.clone(),
-            "attraction_delta":  attraction_delta,
-            "disagreement_delta": disagreement_delta,
-        }));
 
         published_atoms.push(atom_id);
     }
@@ -780,6 +733,12 @@ pub async fn handle_publish_atoms(
                 .execute(&state.pool)
                 .await
                 .ok();
+
+                // Keep graph cache in sync
+                if let Ok(edge_type) = crate::db::graph_cache::EdgeType::from_str(etype) {
+                    let mut cache = state.graph_cache.write().await;
+                    let _ = cache.add_edge(src, tgt, edge_type);
+                }
             }
         }
     }
@@ -796,6 +755,21 @@ pub async fn handle_publish_atoms(
             if let Some(parent_ids) = prov["parent_ids"].as_array() {
                 for pid in parent_ids {
                     if let Some(pid_str) = pid.as_str() {
+                        // Validate parent atom exists and is not retracted/archived
+                        let parent_exists: bool = sqlx::query_scalar(
+                            "SELECT EXISTS(SELECT 1 FROM atoms WHERE atom_id = $1 AND NOT retracted AND NOT archived)"
+                        )
+                        .bind(pid_str)
+                        .fetch_one(&state.pool)
+                        .await
+                        .unwrap_or(false);
+
+                        if !parent_exists {
+                            return Err(MoteError::Validation(format!(
+                                "parent atom '{}' does not exist or is retracted/archived", pid_str
+                            )));
+                        }
+
                         if sqlx::query(
                             "INSERT INTO edges (source_id, target_id, type) VALUES ($1,$2,'derived_from')
                              ON CONFLICT (source_id, target_id, type) DO NOTHING"
@@ -813,6 +787,10 @@ pub async fn handle_publish_atoms(
                             .execute(&state.pool)
                             .await
                             .ok();
+
+                            // Keep graph cache in sync
+                            let mut cache = state.graph_cache.write().await;
+                            let _ = cache.add_edge(atom_id, pid_str, crate::db::graph_cache::EdgeType::DerivedFrom);
                         }
                     }
                 }
@@ -825,9 +803,7 @@ pub async fn handle_publish_atoms(
     state.metrics.publish_requests_queued.fetch_add(published_atoms.len() as u64, std::sync::atomic::Ordering::Relaxed);
 
     Ok(json!({
-        "published_atoms":    published_atoms,
-        "pheromone_deltas":   pheromone_deltas,
-        "auto_contradictions": auto_contradictions,
+        "published_atoms": published_atoms,
     }))
 }
 
@@ -1105,21 +1081,40 @@ pub async fn get_exploration_suggestions(
 }
 
 pub async fn handle_get_graph_edges(state: &AppState, params: Option<Value>) -> Result<Value> {
-    // Only authenticate when called from the public RPC endpoint (params present).
-    // Internal callers (rspc_router) pass None to bypass.
-    if params.is_some() {
+    // Only authenticate when called from the public RPC endpoint (agent_id present).
+    // Internal callers (rspc_router) may pass params with only project_id — skip auth.
+    if params.as_ref().map(|p| !p["agent_id"].is_null()).unwrap_or(false) {
         authenticate_and_rate_limit(state, &params).await?;
     }
-    let rows = sqlx::query(
-        "SELECT e.source_id, e.target_id, e.type, e.repl_type, e.created_at
-         FROM edges e
-         JOIN atoms a1 ON e.source_id = a1.atom_id AND NOT a1.retracted AND NOT a1.archived
-         JOIN atoms a2 ON e.target_id = a2.atom_id AND NOT a2.retracted AND NOT a2.archived
-         ORDER BY e.created_at ASC"
-    )
-    .fetch_all(&state.pool)
-    .await
-    .map_err(MoteError::Database)?;
+    let project_id_filter: Option<String> = params
+        .as_ref()
+        .and_then(|p| serde_json::from_value(p["project_id"].clone()).ok());
+
+    let rows = if let Some(ref pid) = project_id_filter {
+        sqlx::query(
+            "SELECT e.source_id, e.target_id, e.type, e.repl_type, e.created_at
+             FROM edges e
+             JOIN atoms a1 ON e.source_id = a1.atom_id AND NOT a1.retracted AND NOT a1.archived
+             JOIN atoms a2 ON e.target_id = a2.atom_id AND NOT a2.retracted AND NOT a2.archived
+             WHERE a1.project_id = $1 AND a2.project_id = $1
+             ORDER BY e.created_at ASC"
+        )
+        .bind(pid)
+        .fetch_all(&state.pool)
+        .await
+        .map_err(MoteError::Database)?
+    } else {
+        sqlx::query(
+            "SELECT e.source_id, e.target_id, e.type, e.repl_type, e.created_at
+             FROM edges e
+             JOIN atoms a1 ON e.source_id = a1.atom_id AND NOT a1.retracted AND NOT a1.archived
+             JOIN atoms a2 ON e.target_id = a2.atom_id AND NOT a2.retracted AND NOT a2.archived
+             ORDER BY e.created_at ASC"
+        )
+        .fetch_all(&state.pool)
+        .await
+        .map_err(MoteError::Database)?
+    };
 
     let edges: Vec<Value> = rows.iter().map(|r| {
         let repl_type: Option<String> = r.get("repl_type");
@@ -1203,6 +1198,677 @@ fn infer_value_type(v: &serde_json::Value) -> &'static str {
         _ => "string",
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// New v2 MCP tool interface
+// ═══════════════════════════════════════════════════════════════════════════════
+
+// ── Param helpers ─────────────────────────────────────────────────────────────
+
+fn required_string(params: &Value, key: &str) -> Result<String> {
+    params[key]
+        .as_str()
+        .map(|s| s.to_string())
+        .ok_or_else(|| MoteError::Validation(format!("'{}' field required", key)))
+}
+
+fn optional_string(params: &Value, key: &str) -> Option<String> {
+    params[key].as_str().map(|s| s.to_string())
+}
+
+// ── Scored atom struct (used by survey) ───────────────────────────────────────
+
+#[derive(Debug, Clone)]
+struct ScoredAtom {
+    atom_id:         String,
+    atom_type:       String,
+    statement:       String,
+    conditions:      serde_json::Value,
+    metrics:         Option<serde_json::Value>,
+    lifecycle:       String,
+    repl_exact:      i32,
+    ph_novelty:      f64,
+    ph_attraction:   f64,
+    ph_repulsion:    f64,
+    ph_disagreement: f64,
+    score:           f64,
+}
+
+// ── Survey helpers ────────────────────────────────────────────────────────────
+
+async fn fetch_scored_atoms(
+    pool: &sqlx::PgPool,
+    domain: &str,
+    project_id: Option<&str>,
+    query_text: &Option<String>,
+) -> Result<Vec<ScoredAtom>> {
+    const SCORE_EXPR: &str = "
+        (a.ph_novelty * (1.0 + a.ph_disagreement) * a.ph_attraction
+          / (1.0 + a.ph_repulsion)
+          / (1.0 + COALESCE(c.claim_count, 0)))";
+
+    if let Some(q) = query_text {
+        let sql = format!(
+            "SELECT a.atom_id, a.type, a.statement, a.conditions, a.metrics,
+             a.lifecycle, a.repl_exact,
+             a.ph_novelty, a.ph_attraction, a.ph_repulsion, a.ph_disagreement,
+             {SCORE_EXPR} AS score
+             FROM atoms a
+             LEFT JOIN (
+               SELECT atom_id, COUNT(*) AS claim_count FROM claims WHERE active = true GROUP BY atom_id
+             ) c ON a.atom_id = c.atom_id
+             WHERE NOT a.archived AND NOT a.retracted AND a.domain = $1
+               AND a.project_id IS NOT DISTINCT FROM $3
+               AND a.statement ILIKE $2
+             ORDER BY score DESC LIMIT 100"
+        );
+        let rows = sqlx::query(&sql)
+            .bind(domain)
+            .bind(format!("%{}%", q))
+            .bind(project_id)
+            .fetch_all(pool)
+            .await
+            .map_err(MoteError::Database)?;
+        return rows_to_scored_atoms(rows);
+    }
+
+    let sql = format!(
+        "SELECT a.atom_id, a.type, a.statement, a.conditions, a.metrics,
+         a.lifecycle, a.repl_exact,
+         a.ph_novelty, a.ph_attraction, a.ph_repulsion, a.ph_disagreement,
+         {SCORE_EXPR} AS score
+         FROM atoms a
+         LEFT JOIN (
+           SELECT atom_id, COUNT(*) AS claim_count FROM claims WHERE active = true GROUP BY atom_id
+         ) c ON a.atom_id = c.atom_id
+         WHERE NOT a.archived AND NOT a.retracted AND a.domain = $1
+           AND a.project_id IS NOT DISTINCT FROM $2
+         ORDER BY score DESC LIMIT 100"
+    );
+    let rows = sqlx::query(&sql)
+        .bind(domain)
+        .bind(project_id)
+        .fetch_all(pool)
+        .await
+        .map_err(MoteError::Database)?;
+    rows_to_scored_atoms(rows)
+}
+
+fn rows_to_scored_atoms(rows: Vec<sqlx::postgres::PgRow>) -> Result<Vec<ScoredAtom>> {
+    use sqlx::Row as _;
+    rows.into_iter()
+        .map(|r| {
+            Ok(ScoredAtom {
+                atom_id:         r.get("atom_id"),
+                atom_type:       r.get("type"),
+                statement:       r.get("statement"),
+                conditions:      r.get("conditions"),
+                metrics:         r.get("metrics"),
+                lifecycle:       r.get("lifecycle"),
+                repl_exact:      r.get("repl_exact"),
+                ph_novelty:      r.get::<f32, _>("ph_novelty") as f64,
+                ph_attraction:   r.get::<f32, _>("ph_attraction") as f64,
+                ph_repulsion:    r.get::<f32, _>("ph_repulsion") as f64,
+                ph_disagreement: r.get::<f32, _>("ph_disagreement") as f64,
+                score:           r.try_get::<f64, _>("score").unwrap_or(0.0),
+            })
+        })
+        .collect()
+}
+
+async fn apply_seen_penalty(atoms: &mut Vec<ScoredAtom>, pool: &sqlx::PgPool, agent_id: &str) -> Result<()> {
+    if atoms.is_empty() {
+        return Ok(());
+    }
+    let placeholders: Vec<String> = (2..=atoms.len() + 1).map(|i| format!("${}", i)).collect();
+    let query = format!(
+        "SELECT atom_id FROM agent_views
+         WHERE agent_id = $1 AND atom_id IN ({}) AND seen_at > NOW() - INTERVAL '1 hour'",
+        placeholders.join(",")
+    );
+    let mut q = sqlx::query(&query).bind(agent_id);
+    for atom in atoms.iter() {
+        q = q.bind(&atom.atom_id);
+    }
+    let rows = q.fetch_all(pool).await.map_err(MoteError::Database)?;
+    use sqlx::Row as _;
+    let seen_ids: std::collections::HashSet<String> = rows.into_iter().map(|r| r.get("atom_id")).collect();
+    for atom in atoms.iter_mut() {
+        if seen_ids.contains(&atom.atom_id) {
+            atom.score *= 0.3;
+        }
+    }
+    Ok(())
+}
+
+fn apply_focus_weights(atoms: &mut Vec<ScoredAtom>, focus: &Option<String>) {
+    match focus.as_deref() {
+        Some("explore") => atoms.iter_mut().for_each(|a| a.score *= a.ph_novelty.powi(2)),
+        Some("exploit") => atoms.iter_mut().for_each(|a| a.score *= a.ph_attraction.powi(2)),
+        Some("replicate") => {
+            atoms.retain(|a| a.lifecycle == "provisional" && a.repl_exact == 0);
+            atoms.sort_by(|a, b| b.ph_attraction.partial_cmp(&a.ph_attraction).unwrap_or(std::cmp::Ordering::Equal));
+        }
+        Some("contest") => atoms.iter_mut().for_each(|a| a.score *= a.ph_disagreement.powi(2)),
+        _ => {} // balanced default
+    }
+}
+
+fn temperature_sample(atoms: &[ScoredAtom], temperature: f64, limit: usize) -> Vec<ScoredAtom> {
+    if temperature <= 0.01 {
+        return atoms.iter().take(limit).cloned().collect();
+    }
+    if atoms.is_empty() {
+        return vec![];
+    }
+    let max_score = atoms.iter().map(|a| a.score).fold(f64::NEG_INFINITY, f64::max);
+    let weights: Vec<f64> = atoms
+        .iter()
+        .map(|a| ((a.score - max_score) / temperature).exp())
+        .collect();
+    let total: f64 = weights.iter().sum();
+    if total == 0.0 {
+        return atoms.iter().take(limit).cloned().collect();
+    }
+
+    use rand::Rng as _;
+    let mut rng = rand::rng();
+    let mut selected = Vec::with_capacity(limit);
+    let mut remaining: Vec<(usize, f64)> = weights
+        .iter()
+        .enumerate()
+        .map(|(i, &w)| (i, w / total))
+        .collect();
+
+    for _ in 0..limit.min(remaining.len()) {
+        let r: f64 = rng.random();
+        let mut cumulative = 0.0;
+        let mut chosen = 0;
+        for (idx, (i, w)) in remaining.iter().enumerate() {
+            cumulative += w;
+            if cumulative >= r {
+                chosen = idx;
+                selected.push(atoms[*i].clone());
+                break;
+            }
+        }
+        if chosen < remaining.len() {
+            remaining.remove(chosen);
+        } else if !remaining.is_empty() {
+            let last = remaining.len() - 1;
+            let i = remaining[last].0;
+            selected.push(atoms[i].clone());
+            remaining.remove(last);
+        }
+        let new_total: f64 = remaining.iter().map(|(_, w)| w).sum();
+        if new_total > 0.0 {
+            remaining.iter_mut().for_each(|(_, w)| *w /= new_total);
+        }
+    }
+    selected
+}
+
+fn generate_context_hint(atom: &ScoredAtom) -> String {
+    let mut hints: Vec<String> = Vec::new();
+    if atom.lifecycle == "provisional" && atom.repl_exact == 0 {
+        hints.push("needs verification — 0 replications".to_string());
+    } else if atom.lifecycle == "provisional" {
+        hints.push(format!("{} replication(s), not yet confirmed", atom.repl_exact));
+    }
+    if atom.lifecycle == "contested" {
+        hints.push("contested — contradicting findings exist".to_string());
+    }
+    if atom.lifecycle == "core" {
+        hints.push("established finding (3+ replications)".to_string());
+    }
+    if atom.ph_novelty > 0.8 {
+        hints.push("high novelty — sparse neighbourhood".to_string());
+    }
+    if atom.ph_disagreement > 0.3 {
+        hints.push(format!("{:.0}% of edges are contradictions", atom.ph_disagreement * 100.0));
+    }
+    hints.join("; ")
+}
+
+async fn record_agent_views(pool: &sqlx::PgPool, agent_id: &str, suggestions: &[Value]) -> Result<()> {
+    for s in suggestions {
+        if let Some(atom_id) = s["atom_id"].as_str() {
+            let _ = sqlx::query(
+                "INSERT INTO agent_views (agent_id, atom_id) VALUES ($1, $2)
+                 ON CONFLICT (agent_id, atom_id) DO UPDATE SET seen_at = NOW()"
+            )
+            .bind(agent_id)
+            .bind(atom_id)
+            .execute(pool)
+            .await;
+        }
+    }
+    Ok(())
+}
+
+fn serialize_full_atom(atom: &crate::domain::atom::Atom) -> Value {
+    json!({
+        "atom_id":     atom.atom_id,
+        "atom_type":   atom.atom_type.to_string(),
+        "domain":      atom.domain,
+        "statement":   atom.statement,
+        "conditions":  atom.conditions,
+        "metrics":     atom.metrics,
+        "provenance":  atom.provenance,
+        "lifecycle":   atom.lifecycle.to_string(),
+        "repl_exact":  atom.repl_exact,
+        "pheromone": {
+            "novelty":      atom.ph_novelty,
+            "attraction":   atom.ph_attraction,
+            "repulsion":    atom.ph_repulsion,
+            "disagreement": atom.ph_disagreement,
+        },
+        "artifact_hash": atom.artifact_tree_hash,
+    })
+}
+
+// ── v2 Handlers ───────────────────────────────────────────────────────────────
+
+/// register — register a new agent (simple token-based auth)
+pub async fn handle_register(state: &AppState, params: Option<Value>) -> Result<Value> {
+    let params = params.unwrap_or(json!({}));
+    let agent_name = params["agent_name"].as_str().unwrap_or("unnamed-agent").to_string();
+    let capabilities: Option<Vec<String>> = serde_json::from_value(params["capabilities"].clone()).ok();
+
+    let response = crate::db::queries::register_agent_simple(&state.pool).await?;
+
+    // Store capabilities if provided
+    if let Some(ref caps) = capabilities {
+        let _ = sqlx::query(
+            "UPDATE agents SET capabilities = $1 WHERE agent_id = $2"
+        )
+        .bind(caps)
+        .bind(&response.agent_id)
+        .execute(&state.pool)
+        .await;
+    }
+
+    Ok(json!({
+        "agent_id":   response.agent_id,
+        "api_token":  response.api_token,
+        "agent_name": agent_name,
+        "capabilities": capabilities,
+        "message": "Agent registered. Pass agent_id and api_token to all write operations."
+    }))
+}
+
+/// survey — scored+sampled atom discovery with focus modes and temperature
+pub async fn handle_survey(state: &AppState, params: Option<Value>) -> Result<Value> {
+    let agent_id = authenticate_and_rate_limit(state, &params).await?;
+    let params = params.ok_or_else(|| MoteError::Validation("Missing params".to_string()))?;
+
+    let domain     = required_string(&params, "domain")?;
+    let project_id = optional_string(&params, "project_id");
+    let focus      = optional_string(&params, "focus");
+    let query_text = optional_string(&params, "query");
+    let temperature: f64 = params["temperature"].as_f64().unwrap_or(1.0);
+    let limit: usize = params["limit"].as_i64().unwrap_or(10) as usize;
+
+    // 1. Fetch scored atoms from DB (scoped to project if provided)
+    let mut atoms = fetch_scored_atoms(&state.pool, &domain, project_id.as_deref(), &query_text).await?;
+
+    // 2. Apply per-agent seen penalty
+    apply_seen_penalty(&mut atoms, &state.pool, &agent_id).await?;
+
+    // 3. Apply focus-mode weight modifiers
+    apply_focus_weights(&mut atoms, &focus);
+
+    // 4. Sample with temperature
+    let selected = temperature_sample(&atoms, temperature, limit);
+
+    // 5. Build response with context hints
+    let suggestions: Vec<Value> = selected.iter().map(|atom| {
+        let context = generate_context_hint(atom);
+        json!({
+            "atom_id":    atom.atom_id,
+            "atom_type":  atom.atom_type,
+            "statement":  atom.statement,
+            "conditions": atom.conditions,
+            "metrics":    atom.metrics,
+            "lifecycle":  atom.lifecycle,
+            "repl_count": atom.repl_exact,
+            "pheromone": {
+                "novelty":      atom.ph_novelty,
+                "attraction":   atom.ph_attraction,
+                "repulsion":    atom.ph_repulsion,
+                "disagreement": atom.ph_disagreement,
+            },
+            "score":   atom.score,
+            "context": context,
+        })
+    }).collect();
+
+    // 6. Record what this agent has seen
+    let _ = record_agent_views(&state.pool, &agent_id, &suggestions).await;
+
+    Ok(json!({ "suggestions": suggestions }))
+}
+
+/// get_atom — fetch a single atom with full pheromone + edge data
+pub async fn handle_get_atom(state: &AppState, params: Option<Value>) -> Result<Value> {
+    authenticate_and_rate_limit(state, &params).await?;
+    let params = params.ok_or_else(|| MoteError::Validation("Missing params".to_string()))?;
+    let atom_id = required_string(&params, "atom_id")?;
+
+    let atom = crate::db::queries::get_atom(&state.pool, &atom_id)
+        .await?
+        .ok_or_else(|| MoteError::NotFound(format!("Atom '{}' not found", atom_id)))?;
+
+    let edges = {
+        let cache = state.graph_cache.read().await;
+        cache.get_edges(&atom_id)
+    };
+
+    Ok(json!({
+        "atom_id":       atom.atom_id,
+        "atom_type":     atom.atom_type.to_string(),
+        "domain":        atom.domain,
+        "statement":     atom.statement,
+        "conditions":    atom.conditions,
+        "metrics":       atom.metrics,
+        "provenance":    atom.provenance,
+        "lifecycle":     atom.lifecycle.to_string(),
+        "repl_count":    atom.repl_exact,
+        "pheromone": {
+            "novelty":      atom.ph_novelty,
+            "attraction":   atom.ph_attraction,
+            "repulsion":    atom.ph_repulsion,
+            "disagreement": atom.ph_disagreement,
+        },
+        "edges":         edges,
+        "artifact_hash": atom.artifact_tree_hash,
+    }))
+}
+
+/// publish — single-atom publish (deduplication, edge insertion, SSE)
+pub async fn handle_publish(state: &AppState, params: Option<Value>) -> Result<Value> {
+    let agent_id = authenticate_and_rate_limit(state, &params).await?;
+    let params = params.ok_or_else(|| MoteError::Validation("Missing params".to_string()))?;
+
+    let atom_type_str = required_string(&params, "atom_type")?;
+    let domain        = required_string(&params, "domain")?;
+    let statement     = required_string(&params, "statement")?;
+
+    let atom_type = match atom_type_str.as_str() {
+        "hypothesis"      => crate::domain::atom::AtomType::Hypothesis,
+        "finding"         => crate::domain::atom::AtomType::Finding,
+        "negative_result" => crate::domain::atom::AtomType::NegativeResult,
+        "delta"           => crate::domain::atom::AtomType::Delta,
+        "experiment_log"  => crate::domain::atom::AtomType::ExperimentLog,
+        "synthesis"       => crate::domain::atom::AtomType::Synthesis,
+        "bounty"          => crate::domain::atom::AtomType::Bounty,
+        _ => return Err(MoteError::Validation(format!("Unknown atom_type: {}", atom_type_str))),
+    };
+
+    let conditions = if params["conditions"].is_null() { json!({}) } else { params["conditions"].clone() };
+    let provenance = if params["provenance"].is_null() { json!({}) } else { params["provenance"].clone() };
+    let metrics = if params["metrics"].is_null() { None } else { Some(params["metrics"].clone()) };
+    let project_id: Option<String> = serde_json::from_value(params["project_id"].clone()).unwrap_or(None);
+
+    // Deduplication: same agent+domain+statement within last 60s
+    let existing: Option<String> = sqlx::query_scalar(
+        "SELECT atom_id FROM atoms
+         WHERE author_agent_id = $1 AND domain = $2 AND statement = $3
+           AND NOT retracted AND NOT archived
+           AND created_at > NOW() - INTERVAL '60 seconds'
+         LIMIT 1"
+    )
+    .bind(&agent_id)
+    .bind(&domain)
+    .bind(&statement)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(MoteError::Database)?;
+
+    if let Some(existing_id) = existing {
+        return Ok(json!({
+            "atom_id":    existing_id,
+            "deduplicated": true,
+            "pheromone":  { "novelty": 0.0, "attraction": 0.0, "repulsion": 0.0, "disagreement": 0.0 },
+        }));
+    }
+
+    // Validate parent_ids
+    let parent_ids: Vec<String> = if let Some(prov) = params["provenance"].as_object() {
+        prov.get("parent_ids")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+            .unwrap_or_default()
+    } else {
+        vec![]
+    };
+
+    for pid in &parent_ids {
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM atoms WHERE atom_id = $1 AND NOT retracted AND NOT archived)"
+        )
+        .bind(pid)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(false);
+        if !exists {
+            return Err(MoteError::Validation(format!("Parent atom '{}' not found or retracted", pid)));
+        }
+    }
+
+    let atom_input = crate::domain::atom::AtomInput {
+        atom_type: atom_type.clone(),
+        domain: domain.clone(),
+        project_id,
+        statement: statement.clone(),
+        conditions: conditions.clone(),
+        metrics,
+        provenance,
+        signature: vec![],
+        artifact_tree_hash: serde_json::from_value(params["artifact_tree_hash"].clone()).unwrap_or(None),
+        artifact_inline: None,
+    };
+
+    let atom_id = crate::db::queries::publish_atom(&state.pool, &agent_id, atom_input).await?;
+
+    // Send to embedding worker
+    let _ = state.embedding_tx.send(atom_id.clone()).await;
+
+    // Update graph cache
+    {
+        let mut cache = state.graph_cache.write().await;
+        cache.add_node(atom_id.clone());
+        // Insert derived_from edges from parent_ids
+        for pid in &parent_ids {
+            let _ = cache.add_edge(&atom_id, pid, crate::db::graph_cache::EdgeType::DerivedFrom);
+        }
+    }
+
+    // Insert edges in DB from parent_ids
+    for pid in &parent_ids {
+        let _ = sqlx::query(
+            "INSERT INTO edges (source_id, target_id, type) VALUES ($1, $2, 'derived_from')
+             ON CONFLICT (source_id, target_id, type) DO NOTHING"
+        )
+        .bind(&atom_id)
+        .bind(pid)
+        .execute(&state.pool)
+        .await;
+    }
+
+    // Auto-register condition keys
+    auto_register_conditions(&state.pool, &domain, &conditions).await;
+
+    // SSE event
+    let _ = state.sse_broadcast_tx.send(crate::state::SseEvent {
+        event_type: "atom_published".to_string(),
+        data: json!({ "type": "atom_published", "atom_id": atom_id, "domain": domain, "atom_type": atom_type.to_string() }),
+        timestamp: chrono::Utc::now(),
+    });
+
+    state.metrics.publish_requests_accepted.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+
+    Ok(json!({
+        "atom_id": atom_id,
+        "pheromone": { "novelty": 0.0, "attraction": 0.0, "repulsion": 0.0, "disagreement": 0.0 },
+        "detected": { "contradictions": [], "replications": [] },
+    }))
+}
+
+/// claim — reserve a research direction without creating a hypothesis atom
+pub async fn handle_claim(state: &AppState, params: Option<Value>) -> Result<Value> {
+    let agent_id = authenticate_and_rate_limit(state, &params).await?;
+    let params = params.ok_or_else(|| MoteError::Validation("Missing params".to_string()))?;
+
+    let atom_id = required_string(&params, "atom_id")?;
+    let intent  = required_string(&params, "intent")?;
+    let ttl: i64 = params["ttl_minutes"].as_i64().unwrap_or(30);
+
+    // Verify atom exists
+    let atom = crate::db::queries::get_atom(&state.pool, &atom_id)
+        .await?
+        .ok_or_else(|| MoteError::NotFound(format!("Atom '{}' not found", atom_id)))?;
+
+    // Expire stale claims first
+    crate::db::queries::expire_stale_claims(&state.pool).await?;
+
+    // Insert claim
+    let claim_id = Uuid::new_v4().to_string();
+    sqlx::query(
+        "INSERT INTO claims (claim_id, agent_id, atom_id, intent, active, expires_at)
+         VALUES ($1, $2, $3, $4, true, NOW() + $5 * INTERVAL '1 minute')"
+    )
+    .bind(&claim_id)
+    .bind(&agent_id)
+    .bind(&atom_id)
+    .bind(&intent)
+    .bind(ttl)
+    .execute(&state.pool)
+    .await
+    .map_err(MoteError::Database)?;
+
+    let claim_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM claims WHERE atom_id = $1 AND active = true"
+    )
+    .bind(&atom_id)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(MoteError::Database)?;
+
+    Ok(json!({
+        "claim_id":      claim_id,
+        "current_claims": claim_count,
+        "atom":          serialize_full_atom(&atom),
+    }))
+}
+
+/// release_claim — deactivate an active claim
+pub async fn handle_release_claim(state: &AppState, params: Option<Value>) -> Result<Value> {
+    authenticate_and_rate_limit(state, &params).await?;
+    let params = params.ok_or_else(|| MoteError::Validation("Missing params".to_string()))?;
+
+    let claim_id = required_string(&params, "claim_id")?;
+    let agent_id = required_string(&params, "agent_id")?;
+
+    let rows = sqlx::query(
+        "UPDATE claims SET active = false WHERE claim_id = $1 AND agent_id = $2 AND active = true"
+    )
+    .bind(&claim_id)
+    .bind(&agent_id)
+    .execute(&state.pool)
+    .await
+    .map_err(MoteError::Database)?
+    .rows_affected();
+
+    if rows == 0 {
+        return Err(MoteError::NotFound("Claim not found or already released".to_string()));
+    }
+
+    Ok(json!({ "ok": true }))
+}
+
+/// get_lineage — BFS traversal of the graph for an atom's ancestry/descendants
+pub async fn handle_get_lineage(state: &AppState, params: Option<Value>) -> Result<Value> {
+    authenticate_and_rate_limit(state, &params).await?;
+    let params = params.ok_or_else(|| MoteError::Validation("Missing params".to_string()))?;
+
+    let atom_id   = required_string(&params, "atom_id")?;
+    let direction = optional_string(&params, "direction").unwrap_or_else(|| "both".to_string());
+    let max_depth = params["max_depth"].as_i64().unwrap_or(3) as usize;
+    let edge_types: Option<Vec<String>> = serde_json::from_value(params["edge_types"].clone()).ok();
+
+    let subgraph = {
+        let cache = state.graph_cache.read().await;
+        cache.traverse(&atom_id, &direction, max_depth, edge_types.as_deref())
+    };
+
+    // Batch-fetch atom details for all nodes
+    let node_ids: Vec<&str> = subgraph.nodes.iter().map(|s| s.as_str()).collect();
+    let atoms = crate::db::queries::get_atoms_by_ids(&state.pool, &node_ids).await?;
+
+    Ok(json!({
+        "nodes": atoms.iter().map(|a| json!({
+            "atom_id":   a.atom_id,
+            "atom_type": a.atom_type.to_string(),
+            "statement": a.statement,
+            "lifecycle": a.lifecycle.to_string(),
+            "pheromone": {
+                "novelty":      a.ph_novelty,
+                "attraction":   a.ph_attraction,
+                "repulsion":    a.ph_repulsion,
+                "disagreement": a.ph_disagreement,
+            },
+        })).collect::<Vec<_>>(),
+        "edges": subgraph.edges.iter().map(|e| json!({
+            "source":    e.source,
+            "target":    e.target,
+            "edge_type": e.edge_type,
+        })).collect::<Vec<_>>(),
+    }))
+}
+
+/// retract — mark an atom as retracted (author only) + SSE event
+pub async fn handle_retract(state: &AppState, params: Option<Value>) -> Result<Value> {
+    let agent_id = authenticate_and_rate_limit(state, &params).await?;
+    let params = params.ok_or_else(|| MoteError::Validation("Missing params".to_string()))?;
+
+    let atom_id = required_string(&params, "atom_id")?;
+    let reason  = required_string(&params, "reason")?;
+
+    // Verify author ownership
+    let owner: Option<String> = sqlx::query_scalar(
+        "SELECT author_agent_id FROM atoms WHERE atom_id = $1"
+    )
+    .bind(&atom_id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(MoteError::Database)?;
+
+    if owner.as_deref() != Some(&agent_id) {
+        return Err(MoteError::Authentication("Only the publishing agent can retract an atom".to_string()));
+    }
+
+    sqlx::query(
+        "UPDATE atoms SET lifecycle = 'retracted', retracted = true, retraction_reason = $1 WHERE atom_id = $2"
+    )
+    .bind(&reason)
+    .bind(&atom_id)
+    .execute(&state.pool)
+    .await
+    .map_err(MoteError::Database)?;
+
+    let _ = state.sse_broadcast_tx.send(crate::state::SseEvent {
+        event_type: "atom_retracted".to_string(),
+        data: json!({ "atom_id": atom_id, "reason": reason }),
+        timestamp: chrono::Utc::now(),
+    });
+
+    Ok(json!({ "ok": true }))
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Condition registry helpers (shared by publish_atoms + handle_publish)
+// ═══════════════════════════════════════════════════════════════════════════════
 
 /// Upsert condition keys for a domain into condition_registry on first observation.
 /// All auto-discovered keys start as required=false; humans can promote them later.

@@ -1,6 +1,7 @@
 use sqlx::PgPool;
-use tracing::{info, error};
 use std::time::Duration;
+use tokio_util::sync::CancellationToken;
+use tracing::{error, info};
 
 pub struct ClaimsExpiryWorker {
     pool: PgPool,
@@ -27,20 +28,31 @@ impl ClaimsExpiryWorker {
         Ok(())
     }
 
-    /// Start periodic claims expiry worker
-    pub async fn start(self) {
-        let mut interval = tokio::time::interval(Duration::from_secs(5 * 60)); // 5 minutes
-
+    /// Start periodic claims expiry worker with cooperative shutdown.
+    pub async fn start(self, cancel_token: CancellationToken) {
+        let base = Duration::from_secs(5 * 60);
         loop {
+            let sleep_dur = jittered_duration(base);
             tokio::select! {
-                _ = interval.tick() => {
+                _ = tokio::time::sleep(sleep_dur) => {
                     if let Err(e) = self.run_expiry_check().await {
                         error!("Claims expiry check failed: {}", e);
                     }
                 }
+                _ = cancel_token.cancelled() => {
+                    info!("Claims expiry worker shutting down");
+                    break;
+                }
             }
         }
     }
+}
+
+fn jittered_duration(base: Duration) -> Duration {
+    use rand::{Rng, SeedableRng};
+    let mut rng = rand::rngs::StdRng::from_os_rng();
+    let factor: f64 = 0.8 + rng.random::<f64>() * 0.4;
+    Duration::from_secs_f64(base.as_secs_f64() * factor)
 }
 
 #[cfg(test)]

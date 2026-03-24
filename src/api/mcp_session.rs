@@ -56,7 +56,7 @@ pub struct SessionStore {
 
 impl SessionStore {
     pub fn new() -> Self {
-        Self::with_ttl_seconds(1800) // 30-minute idle TTL
+        Self::with_ttl_seconds(86400) // 24-hour idle TTL — agents may train for many minutes between MCP calls
     }
 
     pub fn with_ttl_seconds(session_ttl_seconds: u64) -> Self {
@@ -248,14 +248,12 @@ mod tests {
             None,
         );
 
-        // Mock time passage (2 hours ago)
-        let two_hours_ago = Instant::now() - Duration::from_secs(7200);
-        
-        // Manually set old session as expired
+        // Set old session to 25 hours ago so it exceeds the 24-hour idle TTL.
+        let expired_time = Instant::now() - Duration::from_secs(90_000); // 25 hours
         {
             let mut sessions = store.sessions.lock().unwrap();
             if let Some(session) = sessions.get_mut(&old_session_id) {
-                session.last_active_at = two_hours_ago;
+                session.last_active_at = expired_time;
             }
         }
 

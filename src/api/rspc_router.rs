@@ -218,7 +218,8 @@ pub async fn handle_rspc_request(
 
             let atoms: Vec<Atom> = atoms.into_iter().map(domain_atom_to_rspc).collect();
 
-            let edges_result = crate::api::rpc_handlers::rpc_backup::handle_get_graph_edges(&state, None).await
+            let edge_params = project_id_filter.as_ref().map(|pid| serde_json::json!({ "project_id": pid }));
+            let edges_result = crate::api::rpc_handlers::rpc_impl::handle_get_graph_edges(&state, edge_params).await
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
             let edges_data = edges_result.get("edges").and_then(|e| e.as_array())
@@ -255,7 +256,8 @@ pub async fn handle_rspc_request(
             let atom_ids: Vec<String> = atoms.iter().map(|a| a.atom_id.clone()).collect();
             let atoms: Vec<Atom> = atoms.into_iter().map(domain_atom_to_rspc).collect();
 
-            let edges_result = crate::api::rpc_handlers::rpc_backup::handle_get_graph_edges(&state, None).await
+            let edge_params = project_id_filter.as_ref().map(|pid| serde_json::json!({ "project_id": pid }));
+            let edges_result = crate::api::rpc_handlers::rpc_impl::handle_get_graph_edges(&state, edge_params).await
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
             let edges_data = edges_result.get("edges").and_then(|e| e.as_array())
                 .ok_or_else(|| StatusCode::INTERNAL_SERVER_ERROR)?;
@@ -398,7 +400,7 @@ pub async fn handle_rspc_request(
             Ok(Json(serde_json::to_value(RspcResponse { result: serde_json::json!({ "status": "deleted" }) }).unwrap()))
         }
         "publish_atoms" => {
-            let result = crate::api::rpc_handlers::rpc_backup::handle_publish_atoms(
+            let result = crate::api::rpc_handlers::rpc_impl::handle_publish_atoms(
                 &state,
                 request.params,
             )

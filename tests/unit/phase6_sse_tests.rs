@@ -28,7 +28,7 @@ async fn setup_test_state() -> Arc<AppState> {
             max_artifact_storage_per_agent_bytes: 10485760,
         },
         pheromone: asenix::config::PheromoneConfig {
-            decay_half_life_hours: 24,
+            decay_half_life_atoms: 24,
             attraction_cap: 10.0,
             novelty_radius: 0.5,
             disagreement_threshold: 0.8,
@@ -48,6 +48,9 @@ async fn setup_test_state() -> Arc<AppState> {
             staleness_check_interval_minutes: 30,
             bounty_needed_novelty_threshold: 0.7,
             bounty_sparse_region_max_atoms: 3,
+            lifecycle_check_interval_minutes: 60,
+            metrics_collection_interval_seconds: 30,
+            frontier_diversity_k: 8,
         },
         acceptance: asenix::config::AcceptanceConfig {
             required_provenance_fields: vec![],
@@ -60,11 +63,11 @@ async fn setup_test_state() -> Arc<AppState> {
         .await
         .expect("Failed to connect to test database");
     
-    let (embedding_tx, _) = tokio::sync::mpsc::channel(100);
     let (sse_tx, _) = tokio::sync::broadcast::channel(100);
     let storage = Arc::new(asenix::storage::LocalStorage::new(std::path::PathBuf::from("./test_artifacts")));
-    
-    let state = AppState::new(pool, Arc::new(config), embedding_tx, sse_tx, storage)
+
+    let (embedding_tx, _embedding_rx) = tokio::sync::mpsc::channel::<String>(100);
+    let state = AppState::new(pool, Arc::new(config), sse_tx, storage, embedding_tx)
         .await
         .expect("Failed to create test state");
     

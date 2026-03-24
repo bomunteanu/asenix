@@ -81,17 +81,36 @@ pub async fn publish_atom(
     Ok(atom_id)
 }
 
-pub async fn get_atom(pool: &PgPool, atom_id: &str) -> Result<Atom> {
-    let row = sqlx::query("SELECT * FROM atoms WHERE atom_id = $1 AND NOT retracted AND NOT archived")
+pub async fn get_atom(pool: &PgPool, atom_id: &str) -> Result<Option<Atom>> {
+    let row = sqlx::query("SELECT * FROM atoms WHERE atom_id = $1")
         .bind(atom_id)
-        .fetch_one(pool)
+        .fetch_optional(pool)
         .await
         .map_err(MoteError::Database)?;
-    
-    let atom: Atom = serde_json::from_value(row.get("atom_data"))
-        .map_err(|e| MoteError::Validation(format!("Failed to deserialize atom: {}", e)))?;
-    
-    Ok(atom)
+
+    match row {
+        Some(r) => atom_from_row(r).map(Some),
+        None => Ok(None),
+    }
+}
+
+/// Batch-fetch atoms by a slice of IDs (skips retracted/archived).
+pub async fn get_atoms_by_ids(pool: &PgPool, atom_ids: &[&str]) -> Result<Vec<Atom>> {
+    if atom_ids.is_empty() {
+        return Ok(vec![]);
+    }
+    // Build $1,$2,... placeholder list
+    let placeholders: Vec<String> = (1..=atom_ids.len()).map(|i| format!("${}", i)).collect();
+    let query = format!(
+        "SELECT * FROM atoms WHERE atom_id IN ({}) AND NOT retracted AND NOT archived",
+        placeholders.join(",")
+    );
+    let mut q = sqlx::query(&query);
+    for id in atom_ids {
+        q = q.bind(*id);
+    }
+    let rows = q.fetch_all(pool).await.map_err(MoteError::Database)?;
+    rows.into_iter().map(atom_from_row).collect()
 }
 
 pub async fn search_atoms(
@@ -370,6 +389,8 @@ pub fn atom_from_row(row: sqlx::postgres::PgRow) -> Result<Atom> {
         "replicated"  => crate::domain::atom::Lifecycle::Replicated,
         "core"        => crate::domain::atom::Lifecycle::Core,
         "contested"   => crate::domain::atom::Lifecycle::Contested,
+        "resolved"    => crate::domain::atom::Lifecycle::Resolved,
+        "retracted"   => crate::domain::atom::Lifecycle::Retracted,
         l => return Err(MoteError::Validation(format!("Unknown lifecycle: {}", l))),
     };
     let embedding_status = match row.get::<String, _>("embedding_status").as_str() {

@@ -85,7 +85,7 @@ pub async fn owner_jwt_middleware(
     }
 }
 
-// ── Middleware: IP rate limit (60 req/min, unauthenticated endpoints) ─────────
+// ── Middleware: IP rate limit (1000 req/min, unauthenticated endpoints) ───────
 
 pub async fn ip_rate_limit_middleware(
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
@@ -103,7 +103,7 @@ pub async fn ip_rate_limit_middleware(
         // Also skip if caller sends explicit agent auth headers (e.g. scripts).
         || (headers.contains_key("x-agent-id") && headers.contains_key("x-api-token"));
 
-    if !skip && !state.ip_rate_limiter.check(addr.ip(), 60, 60) {
+    if !skip && !state.ip_rate_limiter.check(addr.ip(), 1000, 60) {
         return (
             StatusCode::TOO_MANY_REQUESTS,
             [("Retry-After", "60")],

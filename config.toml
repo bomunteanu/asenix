@@ -11,18 +11,18 @@ embedding_dimension = 384
 structured_vector_reserved_dims = 256
 dims_per_numeric_key = 4
 dims_per_categorical_key = 16
-neighbourhood_radius = 0.3
+neighbourhood_radius = 0.75  # empirically calibrated: actual min pairwise cosine distance ~0.65 for 640-dim hybrid embeddings; 0.75 gives ~1-5 neighbours per atom
 # Optional LLM for summaries
 # summary_llm_endpoint = "http://localhost:8081/completions"
 # summary_llm_model = "gpt-3.5-turbo"
 
 [pheromone]
-decay_half_life_hours = 168
+decay_half_life_atoms = 50  # attraction halves every 50 atoms published in the same domain
 attraction_cap = 100.0
-novelty_radius = 0.3
+novelty_radius = 0.75
 disagreement_threshold = 0.5
 exploration_samples = 10
-exploration_density_radius = 0.5
+exploration_density_radius = 0.75
 
 [trust]
 reliability_threshold = 0.3
@@ -37,6 +37,9 @@ claim_ttl_hours = 24
 staleness_check_interval_minutes = 30
 bounty_needed_novelty_threshold = 0.7
 bounty_sparse_region_max_atoms = 3
+lifecycle_check_interval_minutes = 1
+metrics_collection_interval_seconds = 30
+frontier_diversity_k = 8             # clusters for embedding-space diversity; fixed for sweep comparability
 
 [acceptance]
 required_provenance_fields = ["code_hash", "environment"]

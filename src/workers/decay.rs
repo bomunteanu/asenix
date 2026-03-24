@@ -2,8 +2,9 @@ use crate::config::Config;
 use crate::domain::pheromone::decay_attraction;
 use crate::error::{MoteError, Result};
 use sqlx::{PgPool, Row};
-use tracing::info;
-use chrono::{DateTime, Utc};
+use std::time::Duration;
+use tokio_util::sync::CancellationToken;
+use tracing::{error, info};
 
 pub struct DecayWorker {
     pool: PgPool,
@@ -15,18 +16,26 @@ impl DecayWorker {
         Self { pool, config }
     }
 
-    /// Run a single decay sweep on all atoms with positive attraction
+    /// Run a single decay sweep on all atoms with positive attraction.
+    ///
+    /// Decay is measured in atoms published in the same domain since this atom's
+    /// last_activity_at — so a busy domain erodes signals faster than a quiet one.
     pub async fn run_decay_sweep(&self) -> Result<usize> {
-        let start_time = Utc::now();
-        
-        // Select atoms with positive attraction that are not archived.
-        // Use last_activity_at so that atoms which received new edges recently
-        // (replications, contradictions, etc.) reset their decay clock.
+        // Single query: for each atom with positive attraction, count how many
+        // newer atoms exist in the same domain (i.e. domain activity since last touch).
         let rows = sqlx::query(
-            "SELECT atom_id, ph_attraction, last_activity_at
-             FROM atoms
-             WHERE ph_attraction > 0.001
-             AND NOT archived"
+            "SELECT a.atom_id,
+                    a.ph_attraction,
+                    COUNT(newer.atom_id) AS atoms_since
+             FROM atoms a
+             LEFT JOIN atoms newer
+               ON newer.domain = a.domain
+              AND newer.created_at > a.last_activity_at
+              AND NOT newer.archived
+              AND NOT newer.retracted
+             WHERE a.ph_attraction > 0.001
+               AND NOT a.archived
+             GROUP BY a.atom_id, a.ph_attraction"
         )
         .fetch_all(&self.pool)
         .await?;
@@ -37,30 +46,18 @@ impl DecayWorker {
         }
 
         let mut decayed_atoms = Vec::new();
-        let floor_threshold = 0.001;
-        let half_life_hours = self.config.pheromone.decay_half_life_hours as f64;
+        let floor_threshold = 0.001_f64;
+        let half_life = self.config.pheromone.decay_half_life_atoms as f64;
 
         for row in rows {
             let atom_id: String = row.get("atom_id");
-            let current_attraction: f64 = row.get::<f32, _>("ph_attraction") as f64;
-            let last_activity_at: DateTime<Utc> = row.get("last_activity_at");
+            let current: f64 = row.get::<f32, _>("ph_attraction") as f64;
+            let atoms_since: i64 = row.get("atoms_since");
 
-            // Calculate hours elapsed since last significant activity.
-            // Using last_activity_at (updated on new edges) instead of created_at
-            // prevents over-decaying atoms that received recent replications or derivations.
-            let hours_elapsed = Utc::now().signed_duration_since(last_activity_at).num_hours() as f64;
-            
-            // Apply decay
-            let decayed_attraction = decay_attraction(
-                current_attraction,
-                hours_elapsed,
-                half_life_hours,
-                floor_threshold,
-            );
+            let decayed = decay_attraction(current, atoms_since as f64, half_life, floor_threshold);
 
-            // Only update if value changed significantly
-            if (decayed_attraction - current_attraction).abs() > floor_threshold {
-                decayed_atoms.push((atom_id, decayed_attraction));
+            if (decayed - current).abs() > floor_threshold {
+                decayed_atoms.push((atom_id, decayed));
             }
         }
 
@@ -69,16 +66,8 @@ impl DecayWorker {
             return Ok(0);
         }
 
-        // Apply batch updates
         let updated_count = self.apply_decay_updates(decayed_atoms).await?;
-
-        let elapsed = (Utc::now() - start_time).num_milliseconds();
-        info!(
-            "Decay sweep completed: {} atoms updated in {}ms", 
-            updated_count, 
-            elapsed
-        );
-
+        info!("Decay sweep completed: {} atoms updated", updated_count);
         Ok(updated_count)
     }
 
@@ -106,6 +95,25 @@ impl DecayWorker {
         tx.commit().await.map_err(MoteError::Database)?;
 
         Ok(count)
+    }
+
+    /// Start the periodic decay worker loop with cooperative shutdown.
+    pub async fn start(self, cancel_token: CancellationToken) {
+        let base = Duration::from_secs(self.config.workers.decay_interval_minutes * 60);
+        loop {
+            let sleep_dur = jittered_duration(base);
+            tokio::select! {
+                _ = tokio::time::sleep(sleep_dur) => {
+                    if let Err(e) = self.run_decay_sweep().await {
+                        error!("Decay worker sweep failed: {}", e);
+                    }
+                }
+                _ = cancel_token.cancelled() => {
+                    info!("Decay worker shutting down");
+                    break;
+                }
+            }
+        }
     }
 
     /// Get decay statistics for monitoring
@@ -144,6 +152,13 @@ pub struct DecayStats {
     pub max_attraction: f64,
 }
 
+fn jittered_duration(base: Duration) -> Duration {
+    use rand::{Rng, SeedableRng};
+    let mut rng = rand::rngs::StdRng::from_os_rng();
+    let factor: f64 = 0.8 + rng.random::<f64>() * 0.4;
+    Duration::from_secs_f64(base.as_secs_f64() * factor)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -151,16 +166,16 @@ mod tests {
 
     #[test]
     fn test_decay_calculation() {
-        // Test basic decay
-        let result = decay_attraction(10.0, 168.0, 168.0, 0.001); // 1 half-life
+        // One half-life worth of domain activity → attraction halves
+        let result = decay_attraction(10.0, 50.0, 50.0, 0.001);
         assert!((result - 5.0).abs() < f32::EPSILON as f64);
 
-        // Test below floor
-        let result = decay_attraction(0.0005, 168.0, 168.0, 0.001);
+        // Below floor → zeroed out
+        let result = decay_attraction(0.0005, 50.0, 50.0, 0.001);
         assert_eq!(result, 0.0);
 
-        // Test no decay
-        let result = decay_attraction(10.0, 0.0, 168.0, 0.001);
+        // Zero new atoms → no decay
+        let result = decay_attraction(10.0, 0.0, 50.0, 0.001);
         assert_eq!(result, 10.0);
     }
 

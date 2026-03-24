@@ -1,5 +1,6 @@
 use crate::error::{MoteError, Result};
 use petgraph::graph::{DiGraph, NodeIndex};
+use petgraph::visit::EdgeRef as _;
 use std::collections::HashMap;
 use sqlx::Row;
 
@@ -246,6 +247,230 @@ impl GraphCache {
     pub fn clear_cluster_cache(&mut self) {
         self.cluster_cache.clear();
     }
+
+    /// Return all atoms reachable from any atom in `start_ids` within `max_hops`,
+    /// along with the edge types encountered.  Optionally filtered to specific
+    /// edge type strings.
+    pub fn get_subgraph(
+        &self,
+        start_ids: &[String],
+        max_hops: u32,
+        edge_type_filter: &Option<Vec<String>>,
+    ) -> GraphSubgraph {
+        let mut connected_atoms: Vec<String> = Vec::new();
+        let mut edge_types_found: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut paths: Vec<Vec<String>> = Vec::new();
+        let mut visited: std::collections::HashSet<petgraph::graph::NodeIndex> =
+            std::collections::HashSet::new();
+
+        for start_id in start_ids {
+            let start_idx = match self.node_indices.get(start_id) {
+                Some(idx) => *idx,
+                None => continue,
+            };
+
+            let mut queue: std::collections::VecDeque<(petgraph::graph::NodeIndex, u32, Vec<String>)> =
+                std::collections::VecDeque::new();
+            queue.push_back((start_idx, 0, vec![start_id.clone()]));
+
+            while let Some((current_idx, depth, path)) = queue.pop_front() {
+                if depth >= max_hops {
+                    continue;
+                }
+
+                for neighbor_idx in self.graph.neighbors_directed(current_idx, petgraph::Direction::Outgoing) {
+                    if visited.contains(&neighbor_idx) {
+                        continue;
+                    }
+
+                    let edge_idx = match self.graph.find_edge(current_idx, neighbor_idx) {
+                        Some(e) => e,
+                        None => continue,
+                    };
+                    let edge_type = self.graph.edge_weight(edge_idx).unwrap();
+                    let edge_type_str = edge_type.as_str().to_string();
+
+                    // Apply optional filter
+                    if let Some(filter) = edge_type_filter {
+                        if !filter.contains(&edge_type_str) {
+                            continue;
+                        }
+                    }
+
+                    edge_types_found.insert(edge_type_str);
+
+                    if let Some(atom_id) = self.graph.node_weight(neighbor_idx) {
+                        let mut new_path = path.clone();
+                        new_path.push(atom_id.clone());
+
+                        if !connected_atoms.contains(atom_id) {
+                            connected_atoms.push(atom_id.clone());
+                        }
+                        paths.push(new_path.clone());
+                        visited.insert(neighbor_idx);
+                        queue.push_back((neighbor_idx, depth + 1, new_path));
+                    }
+                }
+            }
+        }
+
+        GraphSubgraph {
+            hops_explored: max_hops,
+            connected_atoms,
+            edge_types_found: edge_types_found.into_iter().collect(),
+            paths,
+        }
+    }
+
+    /// BFS/DFS traversal for `get_lineage`. Returns all nodes and edges reachable
+    /// from `start_atom_id` within `max_depth` hops.
+    /// `direction`: "ancestors" (incoming), "descendants" (outgoing), or "both".
+    /// `edge_type_filter`: optional whitelist of edge type strings.
+    pub fn traverse(
+        &self,
+        start_atom_id: &str,
+        direction: &str,
+        max_depth: usize,
+        edge_type_filter: Option<&[String]>,
+    ) -> LineageSubgraph {
+        use std::collections::{HashSet, VecDeque};
+
+        let start_idx = match self.node_indices.get(start_atom_id) {
+            Some(idx) => *idx,
+            None => {
+                return LineageSubgraph {
+                    nodes: vec![start_atom_id.to_string()],
+                    edges: vec![],
+                };
+            }
+        };
+
+        let mut visited: HashSet<NodeIndex> = HashSet::new();
+        let mut nodes: Vec<String> = vec![start_atom_id.to_string()];
+        let mut edges: Vec<LineageEdge> = Vec::new();
+        let mut queue: VecDeque<(NodeIndex, usize)> = VecDeque::new();
+
+        visited.insert(start_idx);
+        queue.push_back((start_idx, 0));
+
+        while let Some((current_idx, depth)) = queue.pop_front() {
+            if depth >= max_depth {
+                continue;
+            }
+
+            // Collect candidate (neighbor, edge) pairs based on direction
+            let mut candidates: Vec<(NodeIndex, NodeIndex)> = Vec::new(); // (from, to)
+
+            match direction {
+                "ancestors" => {
+                    for neighbor in self.graph.neighbors_directed(current_idx, petgraph::Direction::Incoming) {
+                        candidates.push((neighbor, current_idx));
+                    }
+                }
+                "descendants" => {
+                    for neighbor in self.graph.neighbors_directed(current_idx, petgraph::Direction::Outgoing) {
+                        candidates.push((current_idx, neighbor));
+                    }
+                }
+                _ /* "both" */ => {
+                    for neighbor in self.graph.neighbors_directed(current_idx, petgraph::Direction::Outgoing) {
+                        candidates.push((current_idx, neighbor));
+                    }
+                    for neighbor in self.graph.neighbors_directed(current_idx, petgraph::Direction::Incoming) {
+                        candidates.push((neighbor, current_idx));
+                    }
+                }
+            }
+
+            for (src_idx, tgt_idx) in candidates {
+                let neighbor_idx = if src_idx == current_idx { tgt_idx } else { src_idx };
+
+                let edge_idx = match self.graph.find_edge(src_idx, tgt_idx) {
+                    Some(e) => e,
+                    None => continue,
+                };
+                let edge_type_str = self.graph.edge_weight(edge_idx).unwrap().as_str().to_string();
+
+                // Apply optional edge type filter
+                if let Some(filter) = edge_type_filter {
+                    if !filter.contains(&edge_type_str) {
+                        continue;
+                    }
+                }
+
+                let src_id = self.graph.node_weight(src_idx).cloned().unwrap_or_default();
+                let tgt_id = self.graph.node_weight(tgt_idx).cloned().unwrap_or_default();
+
+                edges.push(LineageEdge {
+                    source: src_id,
+                    target: tgt_id,
+                    edge_type: edge_type_str,
+                });
+
+                if !visited.contains(&neighbor_idx) {
+                    visited.insert(neighbor_idx);
+                    if let Some(atom_id) = self.graph.node_weight(neighbor_idx) {
+                        nodes.push(atom_id.clone());
+                    }
+                    queue.push_back((neighbor_idx, depth + 1));
+                }
+            }
+        }
+
+        LineageSubgraph { nodes, edges }
+    }
+
+    /// Return all outgoing edge triples (source, target, edge_type) for a given atom.
+    pub fn get_edges(&self, atom_id: &str) -> Vec<serde_json::Value> {
+        let idx = match self.node_indices.get(atom_id) {
+            Some(i) => *i,
+            None => return vec![],
+        };
+        self.graph
+            .edges_directed(idx, petgraph::Direction::Outgoing)
+            .filter_map(|edge_ref| {
+                let tgt = self.graph.node_weight(edge_ref.target())?;
+                Some(serde_json::json!({
+                    "source": atom_id,
+                    "target": tgt,
+                    "edge_type": edge_ref.weight().as_str()
+                }))
+            })
+            .chain(
+                self.graph
+                    .edges_directed(idx, petgraph::Direction::Incoming)
+                    .filter_map(|edge_ref| {
+                        let src = self.graph.node_weight(edge_ref.source())?;
+                        Some(serde_json::json!({
+                            "source": src,
+                            "target": atom_id,
+                            "edge_type": edge_ref.weight().as_str()
+                        }))
+                    })
+            )
+            .collect()
+    }
+}
+
+pub struct GraphSubgraph {
+    pub hops_explored: u32,
+    pub connected_atoms: Vec<String>,
+    pub edge_types_found: Vec<String>,
+    pub paths: Vec<Vec<String>>,
+}
+
+/// A lightweight subgraph returned by [`GraphCache::traverse`].
+pub struct LineageSubgraph {
+    /// All node atom_ids reachable (including the start node).
+    pub nodes: Vec<String>,
+    /// All edges in the subgraph.
+    pub edges: Vec<LineageEdge>,
+}
+
+pub struct LineageEdge {
+    pub source: String,
+    pub target: String,
+    pub edge_type: String,
 }
 
 #[derive(Debug, Clone)]

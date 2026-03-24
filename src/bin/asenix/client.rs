@@ -260,6 +260,34 @@ impl AsenixClient {
             .with_context(|| format!("failed to parse '{}' tool result as JSON", tool))
     }
 
+    /// Call a JSON-RPC method on the /rpc endpoint (for internal tools like search_atoms).
+    pub fn rpc_call(&self, method: &str, params: Value) -> Result<Value> {
+        let url = format!("{}/rpc", self.hub);
+        let req = json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params,
+            "id": 1
+        });
+        let resp = self
+            .client
+            .post(&url)
+            .json(&req)
+            .send()
+            .with_context(|| format!("cannot reach /rpc for method '{}'", method))?;
+        if !resp.status().is_success() {
+            let body = resp.text().unwrap_or_default();
+            return Err(anyhow!("rpc '{}' failed: {}", method, body));
+        }
+        let body: Value = resp.json().context("failed to parse RPC response")?;
+        if let Some(err) = body.get("error") {
+            return Err(anyhow!("rpc '{}' error: {}", method, err));
+        }
+        body.get("result")
+            .cloned()
+            .with_context(|| format!("rpc '{}' response missing 'result'", method))
+    }
+
     // ── Project REST endpoints ─────────────────────────────────────────────────
 
     pub fn list_projects(&self) -> Result<Vec<ProjectInfo>> {

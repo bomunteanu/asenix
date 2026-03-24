@@ -59,6 +59,8 @@ async fn setup_test_app_with_sse() -> (Router, broadcast::Receiver<SseEvent>) {
             staleness_check_interval_minutes: 30,
             bounty_needed_novelty_threshold: 0.7,
             bounty_sparse_region_max_atoms: 3,
+            lifecycle_check_interval_minutes: 60,
+            metrics_collection_interval_seconds: 30,
         },
         acceptance: asenix::config::AcceptanceConfig {
             required_provenance_fields: vec![],
@@ -77,11 +79,11 @@ async fn setup_test_app_with_sse() -> (Router, broadcast::Receiver<SseEvent>) {
             .execute(&pool).await.ok();
     }
 
-    let (embedding_queue_tx, _) = mpsc::channel(1000);
     let (sse_tx, sse_rx) = broadcast::channel(1000);
     let storage = Arc::new(LocalStorage::new(std::path::PathBuf::from("./test_artifacts")));
 
-    let state = AppState::new(pool, Arc::new(config), embedding_queue_tx, sse_tx, storage)
+    let (embedding_tx, _embedding_rx) = tokio::sync::mpsc::channel::<String>(100);
+    let state = AppState::new(pool, Arc::new(config), sse_tx, storage, embedding_tx)
         .await.expect("state");
 
     let router = Router::new()
@@ -100,23 +102,23 @@ async fn test_atom_published_sse_event_emitted() {
     let sid = initialize_session(&app).await;
 
     // Register agent
-    let reg = make_tool_call(&app, &sid, "register_agent_simple",
+    let reg = make_tool_call(&app, &sid, "register",
         json!({"agent_name": "sse-test-agent"}), json!(1)).await.unwrap();
     let agent_id = reg["result"]["agent_id"].as_str().unwrap().to_string();
     let api_token = reg["result"]["api_token"].as_str().unwrap().to_string();
 
     // Publish an atom
-    let pub_resp = make_tool_call(&app, &sid, "publish_atoms", json!({
+    let pub_resp = make_tool_call(&app, &sid, "publish", json!({
         "agent_id":  agent_id,
         "api_token": api_token,
-        "atoms": [{
-            "atom_type": "hypothesis",
-            "domain":    "sse_test_domain",
-            "statement": "SSE events should be emitted on publish"
-        }]
+        "atom_type": "hypothesis",
+        "domain":    "sse_test_domain",
+        "statement": "SSE events should be emitted on publish",
+        "conditions": {},
+        "provenance": {}
     }), json!(2)).await.unwrap();
 
-    let atom_id = pub_resp["result"]["published_atoms"][0].as_str().unwrap().to_string();
+    let atom_id = pub_resp["result"]["atom_id"].as_str().unwrap().to_string();
 
     // The event should already be in the channel (fire-and-forget, sync send)
     let event = sse_rx.try_recv().expect("atom_published event should be in channel");
@@ -129,48 +131,49 @@ async fn test_atom_published_sse_event_emitted() {
 #[serial]
 #[tokio::test]
 async fn test_contradiction_detected_sse_event_emitted() {
+    // Contradiction detection is now async (EmbeddingWorker), not synchronous with publish.
+    // This test verifies that publishing two opposing findings both produce atom_published events
+    // and that no contradiction_detected event fires at publish time (it fires later, async).
     let (app, mut sse_rx) = setup_test_app_with_sse().await;
     let sid = initialize_session(&app).await;
 
-    let reg = make_tool_call(&app, &sid, "register_agent_simple",
+    let reg = make_tool_call(&app, &sid, "register",
         json!({"agent_name": "sse-contradiction-agent"}), json!(1)).await.unwrap();
     let agent_id = reg["result"]["agent_id"].as_str().unwrap().to_string();
     let api_token = reg["result"]["api_token"].as_str().unwrap().to_string();
 
     // First finding
-    make_tool_call(&app, &sid, "publish_atoms", json!({
+    make_tool_call(&app, &sid, "publish", json!({
         "agent_id": agent_id, "api_token": api_token,
-        "atoms": [{
-            "atom_type": "finding", "domain": "sse_contra_domain",
-            "statement": "Compound A increases yield",
-            "conditions": {"compound": "A", "temperature": 25},
-            "metrics": [{"name": "yield", "value": 0.9, "direction": "higher_better"}]
-        }]
+        "atom_type": "finding", "domain": "sse_contra_domain",
+        "statement": "Compound A increases yield",
+        "conditions": {"compound": "A", "temperature": 25},
+        "metrics": [{"name": "yield", "value": 0.9, "direction": "higher_better"}],
+        "provenance": {}
     }), json!(2)).await.unwrap();
 
-    // Drain the atom_published event for the first atom
-    let _ = sse_rx.try_recv();
-
-    // Second finding — contradicts first (same conditions, opposing direction)
-    make_tool_call(&app, &sid, "publish_atoms", json!({
+    // Second finding — opposing direction
+    make_tool_call(&app, &sid, "publish", json!({
         "agent_id": agent_id, "api_token": api_token,
-        "atoms": [{
-            "atom_type": "finding", "domain": "sse_contra_domain",
-            "statement": "Compound A decreases yield",
-            "conditions": {"compound": "A", "temperature": 25},
-            "metrics": [{"name": "yield", "value": 0.1, "direction": "lower_better"}]
-        }]
+        "atom_type": "finding", "domain": "sse_contra_domain",
+        "statement": "Compound A decreases yield",
+        "conditions": {"compound": "A", "temperature": 25},
+        "metrics": [{"name": "yield", "value": 0.1, "direction": "lower_better"}],
+        "provenance": {}
     }), json!(3)).await.unwrap();
 
-    // Collect events: expect atom_published + contradiction_detected
+    // Collect synchronously-emitted events
     let mut events = vec![];
     while let Ok(e) = sse_rx.try_recv() {
         events.push(e);
     }
 
-    let has_contradiction = events.iter().any(|e| e.event_type == "contradiction_detected");
-    assert!(has_contradiction, "contradiction_detected event should be emitted; got: {:?}",
+    // Both publishes should emit atom_published; contradiction_detected comes from EmbeddingWorker (async)
+    let published_count = events.iter().filter(|e| e.event_type == "atom_published").count();
+    assert_eq!(published_count, 2, "both findings should emit atom_published; got: {:?}",
         events.iter().map(|e| &e.event_type).collect::<Vec<_>>());
+    let has_contradiction = events.iter().any(|e| e.event_type == "contradiction_detected");
+    assert!(!has_contradiction, "contradiction_detected should not fire at publish time (it's async via EmbeddingWorker)");
 }
 
 #[serial]
@@ -195,27 +198,12 @@ async fn test_synthesis_needed_event_type_constructable() {
 
 #[serial]
 #[tokio::test]
-async fn test_staleness_worker_emits_synthesis_needed_events() {
-    // Test SSE emission functionality by verifying staleness worker can be created with SSE channel
+async fn test_synthesis_needed_sse_event_roundtrip() {
+    // Verifies that a synthesis_needed SseEvent can be sent through a broadcast channel
+    // and received intact. StalenessWorker was merged into BountyWorker (Plan 06);
+    // the channel contract is unchanged.
     let (sse_tx, mut sse_rx) = tokio::sync::broadcast::channel(100);
-    
-    // Create a test staleness worker
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "postgres://asenix:asenix_password@localhost:5432/asenix_test".to_string());
-    let pool = sqlx::PgPool::connect(&database_url).await.unwrap();
-    
-    let _staleness_worker = asenix::workers::staleness::StalenessWorker::new(
-        pool,
-        0.5, // neighbourhood_radius
-        0.7, // bounty_threshold
-        sse_tx.clone(),
-    );
 
-    // Verify the worker was created successfully
-    // The key test is that the SSE channel can be passed to the staleness worker
-    // and that events can be sent through the same channel type
-    
-    // Send a test event through the channel to verify connectivity
     let test_event = asenix::state::SseEvent {
         event_type: "synthesis_needed".to_string(),
         data: serde_json::json!({
@@ -225,31 +213,23 @@ async fn test_staleness_worker_emits_synthesis_needed_events() {
         }),
         timestamp: chrono::Utc::now(),
     };
-    
-    // Send test event through the channel
+
     let _ = sse_tx.send(test_event);
-    
-    // Verify we can receive the event
+
     let mut found_event = false;
     while let Ok(event) = sse_rx.try_recv() {
         if event.event_type == "synthesis_needed" {
             found_event = true;
             assert_eq!(event.data["type"], "synthesis_needed");
             assert_eq!(event.data["atom_count"], 25);
-            
             let cluster_center = event.data["cluster_center"].as_array();
             assert!(cluster_center.is_some());
             assert_eq!(cluster_center.unwrap().len(), 5);
-            
             break;
         }
     }
-    
+
     assert!(found_event, "Should receive synthesis_needed event through SSE channel");
-    
-    // The key test is that the staleness worker can be created with an SSE channel
-    // This verifies the integration between the staleness worker and SSE system
-    // Without needing to test the full staleness detection logic
 }
 
 #[serial]

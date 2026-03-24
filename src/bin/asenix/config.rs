@@ -102,6 +102,11 @@ pub fn workdir_path(domain: &str, n: usize) -> PathBuf {
         .join(n.to_string())
 }
 
+/// PID file for a background agent: /tmp/asenix/<domain>/<n>/agent.pid
+pub fn pid_path(domain: &str, n: usize) -> PathBuf {
+    workdir_path(domain, n).join("agent.pid")
+}
+
 /// Timestamped log path for a domain agent run.
 pub fn domain_log_path(domain: &str, n: usize, timestamp: &str) -> PathBuf {
     logs_dir().join(format!("{}_agent_{}_{}.log", domain, n, timestamp))

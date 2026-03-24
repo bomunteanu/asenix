@@ -7,7 +7,7 @@ export const Route = createFileRoute('/admin')({
   component: AdminPage,
 })
 
-const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:3000'
+const API_BASE = import.meta.env.VITE_API_URL ?? ''
 
 function AdminPage() {
   const { token, setToken, logout } = useAdminAuth()

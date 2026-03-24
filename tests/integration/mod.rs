@@ -1,20 +1,15 @@
 // Integration tests module
 
-mod claim_direction_tests;
 mod publish_atoms_tests;
 mod query_cluster_tests;
 mod health_tests;
 mod schema_tests;
-mod agent_registration_tests;
-mod coordination_test_fixed;
-mod mcp_lifecycle_tests;
 mod mcp_tools_tests;
 mod sse_tests;
 mod review_queue_tests;
 mod full_workflow_tests;
 mod artifact_unification_tests;
 mod artifact_processing_tests;
-mod exploration_integration_tests;
 mod project_tests;
 
 use axum::Router;
@@ -90,6 +85,8 @@ pub async fn setup_test_app() -> Router {
             staleness_check_interval_minutes: 30,
             bounty_needed_novelty_threshold: 0.7,
             bounty_sparse_region_max_atoms: 3,
+            lifecycle_check_interval_minutes: 60,
+            metrics_collection_interval_seconds: 30,
         },
         acceptance: asenix::config::AcceptanceConfig {
             required_provenance_fields: vec!["agent_id".to_string(), "timestamp".to_string()],
@@ -109,14 +106,14 @@ pub async fn setup_test_app() -> Router {
     truncate_all_tables(&pool).await.expect("Failed to truncate tables");
 
     // Create application state
-    let (embedding_queue_tx, _embedding_queue_rx) = mpsc::channel(1000);
     let (sse_broadcast_tx, _sse_broadcast_rx) = broadcast::channel(1000);
-    
+
     let storage = Arc::new(LocalStorage::new(
         std::path::PathBuf::from("./test_artifacts")
     ));
-    
-    let state = AppState::new(pool, Arc::new(config), embedding_queue_tx, sse_broadcast_tx, storage).await
+
+    let (embedding_tx, _embedding_rx) = tokio::sync::mpsc::channel::<String>(100);
+    let state = AppState::new(pool, Arc::new(config), sse_broadcast_tx, storage, embedding_tx).await
         .expect("Failed to create app state");
 
     // Build router

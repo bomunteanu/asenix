@@ -120,6 +120,8 @@ async fn setup_project_test_app() -> Router {
             staleness_check_interval_minutes: 30,
             bounty_needed_novelty_threshold: 0.7,
             bounty_sparse_region_max_atoms: 3,
+            lifecycle_check_interval_minutes: 60,
+            metrics_collection_interval_seconds: 30,
         },
         acceptance: asenix::config::AcceptanceConfig {
             required_provenance_fields: vec!["agent_id".to_string(), "timestamp".to_string()],
@@ -146,12 +148,12 @@ async fn setup_project_test_app() -> Router {
         )"
     ).execute(&pool).await;
 
-    let (embedding_queue_tx, _) = mpsc::channel(1000);
     let (sse_broadcast_tx, _) = broadcast::channel(1000);
 
     let storage = Arc::new(LocalStorage::new(std::path::PathBuf::from("./test_artifacts")));
 
-    let state = AppState::new(pool, config, embedding_queue_tx, sse_broadcast_tx, storage)
+    let (embedding_tx, _embedding_rx) = tokio::sync::mpsc::channel::<String>(100);
+    let state = AppState::new(pool, config, sse_broadcast_tx, storage, embedding_tx)
         .await
         .expect("Failed to create AppState");
 
@@ -340,7 +342,7 @@ async fn public_get(router: &Router, path: &str) -> (StatusCode, Value) {
 
 /// Register a simple agent (api-token auth), returning `(agent_id, api_token)`.
 async fn register_agent(router: &Router, session_id: &str, name: &str, id: i64) -> (String, String) {
-    let r = make_tool_call(router, session_id, "register_agent_simple",
+    let r = make_tool_call(router, session_id, "register",
         json!({ "agent_name": name }), json!(id))
         .await
         .unwrap();
@@ -491,21 +493,20 @@ async fn test_delete_project_atoms_survive() {
     let session_id = initialize_session(&app).await;
     let (agent_id, api_token) = register_agent(&app, &session_id, "survivor-agent", 1).await;
 
-    let publish_resp = make_tool_call(&app, &session_id, "publish_atoms", json!({
+    let publish_resp = make_tool_call(&app, &session_id, "publish", json!({
         "agent_id":  agent_id,
         "api_token": api_token,
-        "atoms": [{
-            "atom_type": "finding",
-            "domain":    "doomed_domain",
-            "project_id": pid,
-            "statement": "Atom that should survive project deletion"
-        }]
+        "atom_type": "finding",
+        "domain":    "doomed_domain",
+        "project_id": pid,
+        "statement": "Atom that should survive project deletion",
+        "conditions": {},
+        "provenance": {}
     }), json!(2)).await.unwrap();
 
     assert!(publish_resp["error"].is_null(), "publish failed: {:?}", publish_resp);
-    let published_ids = publish_resp["result"]["published_atoms"].as_array()
-        .expect(&format!("published_atoms missing from: {}", publish_resp));
-    assert_eq!(published_ids.len(), 1, "expected 1 published atom");
+    assert!(publish_resp["result"]["atom_id"].is_string(),
+        "atom_id missing from: {}", publish_resp);
 
     // Delete the project.
     //
@@ -957,25 +958,22 @@ async fn test_post_seed_bounty_to_rpc_creates_atom_in_correct_domain() {
     assert_eq!(sb_status, StatusCode::OK);
     let fetched_bounty = &sb_body["seed_bounty"];
 
-    // Publish it via /rpc publish_atoms
-    let publish_resp = make_tool_call(&app, &session_id, "publish_atoms", json!({
+    // Publish it via the new `publish` tool
+    let publish_resp = make_tool_call(&app, &session_id, "publish", json!({
         "agent_id":  agent_id,
         "api_token": api_token,
-        "atoms": [{
-            "atom_type": fetched_bounty["atom_type"],
-            "domain":    fetched_bounty["domain"],
-            "statement": fetched_bounty["statement"],
-            "conditions": fetched_bounty["conditions"]
-        }]
+        "atom_type": fetched_bounty["atom_type"],
+        "domain":    fetched_bounty["domain"],
+        "statement": fetched_bounty["statement"],
+        "conditions": fetched_bounty["conditions"],
+        "provenance": {}
     }), json!(10)).await.unwrap();
 
     assert!(publish_resp["error"].is_null(),
-        "publish_atoms failed: {:?}", publish_resp);
+        "publish failed: {:?}", publish_resp);
 
-    // published_atoms is a Vec<String> (atom IDs), not objects.
-    let published = publish_resp["result"]["published_atoms"].as_array()
-        .expect(&format!("published_atoms missing from: {}", publish_resp));
-    assert_eq!(published.len(), 1, "expected 1 published atom");
+    assert!(publish_resp["result"]["atom_id"].is_string(),
+        "atom_id missing from: {}", publish_resp);
 
     // The atom was published with the domain taken directly from the seed bounty
     // spec ("bootstrapped_research"). A successful publish with that domain string

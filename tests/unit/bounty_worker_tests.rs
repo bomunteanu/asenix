@@ -131,6 +131,7 @@ async fn test_bounty_published_when_novelty_exceeds_threshold() {
         0.001,  // exploration_density_radius (tiny — low density guaranteed)
         384,    // embedding_dimension
         1000,   // sparse_region_max_atoms
+        0.5,    // neighbourhood_radius
     );
 
     let count = worker
@@ -181,6 +182,7 @@ async fn test_bounty_skipped_when_region_is_dense() {
         1.9,   // exploration_density_radius (large — finds many neighbours)
         384,   // embedding_dimension
         3,     // sparse_region_max_atoms (strict — only <3 counts as sparse)
+        0.5,   // neighbourhood_radius
     );
 
     let count = worker
@@ -210,6 +212,7 @@ async fn test_zero_atom_domain_ignored() {
         0.5,  // exploration_density_radius
         384,  // embedding_dimension
         3,    // sparse_region_max_atoms
+        0.5,  // neighbourhood_radius
     );
 
     let count = worker

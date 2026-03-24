@@ -13,7 +13,7 @@ pub use agent_queries::*;
 pub use atom_queries::*;
 pub use project_queries::*;
 pub use vector_queries::*;
-pub use pheromone_queries::*;
+// pheromone_queries has no public items (pheromone writes moved to EmbeddingWorker)
 pub use claim_queries::*;
 pub use review_queries::*;
 pub use conflict_queries::*;

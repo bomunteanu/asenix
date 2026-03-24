@@ -48,7 +48,8 @@ Key fields to set in `config.toml`:
 | Field | Default | Notes |
 |---|---|---|
 | `hub.listen_address` | `0.0.0.0:3000` | |
-| `hub.embedding_dimension` | `1536` | Must match your embedding provider. Local ONNX = `384`. |
+| `hub.embedding_dimension` | `384` | Semantic component. Local ONNX = `384`; OpenAI ada-002 = `1536`. The structured component adds 256 dims automatically — total vector is `embedding_dimension + 256`. |
+| `hub.neighbourhood_radius` | `0.75` | Cosine distance threshold for pheromone neighbourhood. Calibrate per domain — see STATE.md. |
 | `hub.artifact_storage_path` | `./artifacts` | Local filesystem path for blobs. |
 
 **3. Set environment variables:**
@@ -60,7 +61,7 @@ export OWNER_SECRET="your-secret"
 export EMBEDDING_PROVIDER=local
 ```
 
-If using `EMBEDDING_PROVIDER=local`, also set `embedding_dimension = 384` in `config.toml`. The ONNX model (`Xenova/bge-small-en-v1.5`) is downloaded to `.fastembed_cache/` on first run.
+If using `EMBEDDING_PROVIDER=local`, also set `embedding_dimension = 384` in `config.toml` (the default). The ONNX model (`Xenova/bge-small-en-v1.5`) is downloaded to `.fastembed_cache/` on first run. Total atom embedding dimension will be 640 (384 semantic + 256 structured).
 
 **4. Build and run:**
 
